@@ -3,15 +3,19 @@ import UniformTypeIdentifiers
 
 struct ContentView: View {
     @ObservedObject var engine: AudioEngineManager
-    @State private var showFileImporter = false
+    @State private var showFileImporter  = false
+    @State private var showSaveSheet     = false
+    @State private var newPresetName     = ""
+    @State private var showPresetsPanel  = false
 
     var body: some View {
         VStack(spacing: 8) {
 
             // ── Спектр ───────────────────────────────────────────────
             SpectrumView(
-                pre: engine.preFrame,
-                post: engine.postFrame,
+                pre:      engine.preFrame,
+                post:     engine.postFrame,
+                snapshot: engine.snapshotFrame,
                 fMin: 60,
                 fMax: 8000,
                 yMin: -110,
@@ -71,7 +75,43 @@ struct ContentView: View {
                         .frame(maxWidth: 220, alignment: .leading)
                 }
 
+                // Snapshot
+                Button {
+                    engine.takeSnapshot()
+                } label: {
+                    Label("Snapshot", systemImage: "camera")
+                }
+                .buttonStyle(.bordered)
+                .help("Freeze current pre-EQ spectrum for comparison")
+
+                if !engine.snapshotFrame.freqs.isEmpty {
+                    Button { engine.clearSnapshot() } label: {
+                        Image(systemName: "camera.badge.minus")
+                    }
+                    .buttonStyle(.bordered)
+                    .help("Clear snapshot")
+                }
+
                 Spacer()
+
+                // AutoEQ
+                Button {
+                    engine.startAutoEQ()
+                } label: {
+                    if engine.isAutoEQRunning {
+                        HStack(spacing: 5) {
+                            ProgressView(value: engine.autoEQProgress)
+                                .frame(width: 50)
+                            Text("Analyzing…")
+                        }
+                    } else {
+                        Label("AutoEQ", systemImage: "wand.and.stars")
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.purple)
+                .disabled(engine.isAutoEQRunning || engine.mode == .idle)
+                .help("Play guitar for 4 sec, AutoEQ will flatten the response")
 
                 // EQ
                 Button {
@@ -85,10 +125,16 @@ struct ContentView: View {
                 Button("Reset EQ") { engine.resetEQ() }
                     .buttonStyle(.bordered)
 
-                Button { engine.savePreset() } label: {
-                    Label("Save EQ", systemImage: "square.and.arrow.down")
+                // Presets
+                Button {
+                    showPresetsPanel.toggle()
+                } label: {
+                    Label("Presets", systemImage: "list.star")
                 }
                 .buttonStyle(.bordered)
+                .popover(isPresented: $showPresetsPanel) {
+                    PresetsPanel(engine: engine, showSaveSheet: $showSaveSheet, newPresetName: $newPresetName)
+                }
             }
 
             // ── Устройства ───────────────────────────────────────────
@@ -170,6 +216,79 @@ struct ContentView: View {
 
     private func freqLabel(_ f: Float) -> String {
         f >= 1000 ? (floor(f / 1000) == f / 1000 ? "\(Int(f / 1000))k" : String(format: "%.1fk", f / 1000)) : "\(Int(f))"
+    }
+}
+
+// ── Панель пресетов ───────────────────────────────────────────────────
+struct PresetsPanel: View {
+    @ObservedObject var engine: AudioEngineManager
+    @Binding var showSaveSheet: Bool
+    @Binding var newPresetName: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("Presets").font(.headline).padding()
+                Spacer()
+                Button {
+                    newPresetName = ""
+                    showSaveSheet = true
+                } label: {
+                    Label("Save current", systemImage: "plus")
+                }
+                .buttonStyle(.bordered)
+                .padding(.trailing)
+            }
+            Divider()
+
+            if engine.namedPresets.isEmpty {
+                Text("No saved presets")
+                    .foregroundStyle(.secondary)
+                    .font(.caption)
+                    .padding()
+            } else {
+                List {
+                    ForEach(engine.namedPresets) { preset in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(preset.name).font(.body)
+                                Text(preset.date, style: .date)
+                                    .font(.caption2).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Button("Load") { engine.loadNamedPreset(preset) }
+                                .buttonStyle(.bordered)
+                            Button { engine.deleteNamedPreset(preset) } label: {
+                                Image(systemName: "trash")
+                            }
+                            .buttonStyle(.bordered)
+                            .foregroundStyle(.red)
+                        }
+                    }
+                }
+                .frame(minHeight: 120, maxHeight: 300)
+            }
+        }
+        .frame(minWidth: 320)
+        .sheet(isPresented: $showSaveSheet) {
+            VStack(spacing: 16) {
+                Text("Save Preset").font(.headline)
+                TextField("Preset name", text: $newPresetName)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 240)
+                HStack(spacing: 12) {
+                    Button("Cancel") { showSaveSheet = false }
+                        .buttonStyle(.bordered)
+                    Button("Save") {
+                        engine.saveNamedPreset(name: newPresetName)
+                        showSaveSheet = false
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(newPresetName.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+            .padding(24)
+        }
     }
 }
 

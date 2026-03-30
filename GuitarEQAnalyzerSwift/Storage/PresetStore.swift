@@ -1,33 +1,42 @@
 import Foundation
 
 final class PresetStore {
-    private let fileURL: URL
+    private let dir: URL
+    private let lastUsedURL: URL
+    private let namedURL:    URL
 
-    init(filename: String = "eq_saved.json") {
-        let root = FileManager.default.homeDirectoryForCurrentUser
+    init() {
+        dir = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".guitar-eq-analyzer-swift", isDirectory: true)
-        self.fileURL = root.appendingPathComponent(filename)
+        lastUsedURL = dir.appendingPathComponent("eq_saved.json")
+        namedURL    = dir.appendingPathComponent("eq_presets.json")
     }
 
-    func load() -> EQPreset? {
-        do {
-            let data = try Data(contentsOf: fileURL)
-            return try JSONDecoder().decode(EQPreset.self, from: data)
-        } catch {
-            return nil
-        }
+    // ── Last-used (авто-сохранение) ─────────────────────────
+    func loadLastUsed() -> EQPreset? {
+        guard let data = try? Data(contentsOf: lastUsedURL) else { return nil }
+        return try? JSONDecoder().decode(EQPreset.self, from: data)
     }
 
-    @discardableResult
-    func save(_ preset: EQPreset) throws -> URL {
-        let folder = fileURL.deletingLastPathComponent()
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        let data = try JSONEncoder().encode(preset)
-        try data.write(to: fileURL, options: .atomic)
-        return fileURL
+    func saveLastUsed(_ preset: EQPreset) {
+        try? ensureDir()
+        let data = try? JSONEncoder().encode(preset)
+        try? data?.write(to: lastUsedURL, options: .atomic)
     }
 
-    func pathString() -> String {
-        fileURL.path
+    // ── Named presets ────────────────────────────────────────
+    func loadNamed() -> [NamedPreset] {
+        guard let data = try? Data(contentsOf: namedURL) else { return [] }
+        return (try? JSONDecoder().decode([NamedPreset].self, from: data)) ?? []
+    }
+
+    func saveNamed(_ presets: [NamedPreset]) {
+        try? ensureDir()
+        let data = try? JSONEncoder().encode(presets)
+        try? data?.write(to: namedURL, options: .atomic)
+    }
+
+    private func ensureDir() throws {
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     }
 }

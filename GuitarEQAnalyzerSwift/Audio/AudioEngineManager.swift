@@ -24,8 +24,9 @@ final class AudioEngineManager: ObservableObject {
 
     @Published var mode: AudioSourceMode = .idle
     @Published var eqEnabled = true
-    @Published var preFrame = SpectrumFrame(freqs: [], magsDb: [])
-    @Published var postFrame = SpectrumFrame(freqs: [], magsDb: [])
+    @Published var preFrame      = SpectrumFrame(freqs: [], magsDb: [])
+    @Published var postFrame     = SpectrumFrame(freqs: [], magsDb: [])
+    @Published var snapshotFrame = SpectrumFrame(freqs: [], magsDb: [])
     @Published var eqGains: [Float] = defaultGains
     @Published var loadedFileName: String = ""
     @Published var inputDevices: [AudioDevice] = []
@@ -33,6 +34,15 @@ final class AudioEngineManager: ObservableObject {
     @Published var selectedInputID: AudioDeviceID?
     @Published var selectedOutputID: AudioDeviceID?
     @Published var statusText: String = "Ready"
+    @Published var isAutoEQRunning = false
+    @Published var autoEQProgress: Double = 0
+    @Published var namedPresets: [NamedPreset] = []
+
+    // AutoEQ accumulator
+    private var accumMags:  [Float] = []
+    private var accumCount: Int     = 0
+    private var autoEQTimer: DispatchSourceTimer?
+    private let autoEQDuration: Double = 4.0
 
     private let engine = AVAudioEngine()
     private let playerNode = AVAudioPlayerNode()
@@ -55,6 +65,7 @@ final class AudioEngineManager: ObservableObject {
         startEngineIfNeeded()
         startDisplayUpdates()
         applySourceMode()
+        namedPresets = presetStore.loadNamed()
     }
 
     func openFile(url: URL) {
@@ -106,13 +117,103 @@ final class AudioEngineManager: ObservableObject {
         eqNode.bands[index].gain = eqGains[index]
     }
 
-    func savePreset() {
-        do {
-            let url = try presetStore.save(EQPreset(gains: eqGains))
-            statusText = "Preset saved: \(url.lastPathComponent)"
-        } catch {
-            statusText = "Save preset failed: \(error.localizedDescription)"
+    // ── Snapshot ─────────────────────────────────────────────
+    func takeSnapshot() {
+        snapshotFrame = preFrame
+        statusText    = "Snapshot taken"
+    }
+
+    func clearSnapshot() {
+        snapshotFrame = SpectrumFrame(freqs: [], magsDb: [])
+    }
+
+    // ── AutoEQ ───────────────────────────────────────────────
+    func startAutoEQ() {
+        guard mode != .idle else { statusText = "Start MIC or File first"; return }
+        accumMags  = []
+        accumCount = 0
+        isAutoEQRunning = true
+        autoEQProgress  = 0
+        statusText = "Analyzing... play guitar"
+
+        let steps     = 40
+        var stepsDone = 0
+        let t = DispatchSource.makeTimerSource(queue: .main)
+        t.schedule(deadline: .now(), repeating: autoEQDuration / Double(steps))
+        t.setEventHandler { [weak self] in
+            guard let self else { return }
+            stepsDone += 1
+            self.autoEQProgress = Double(stepsDone) / Double(steps)
+            if stepsDone >= steps {
+                t.cancel()
+                self.autoEQTimer = nil
+                self.finishAutoEQ()
+            }
         }
+        t.resume()
+        autoEQTimer = t
+    }
+
+    private func finishAutoEQ() {
+        isAutoEQRunning = false
+        autoEQProgress  = 0
+        guard accumCount > 0, !accumMags.isEmpty else {
+            statusText = "AutoEQ: no signal captured"
+            return
+        }
+        let avg  = accumMags.map { $0 / Float(accumCount) }
+        let newGains = computeAutoEQGains(spectrum: avg, freqs: preFrame.freqs)
+        eqGains = newGains
+        applyGainsToBands()
+        presetStore.saveLastUsed(EQPreset(gains: eqGains))
+        statusText = "AutoEQ applied"
+    }
+
+    private func computeAutoEQGains(spectrum: [Float], freqs: [Float]) -> [Float] {
+        guard !freqs.isEmpty else { return eqGains }
+        var bandLevels: [Float] = []
+        for bandFreq in Self.eqFrequencies {
+            // Ищем ближайший бин и усредняем ±3 бина
+            let nearest = freqs.enumerated().min(by: { abs($0.element - bandFreq) < abs($1.element - bandFreq) })?.offset ?? 0
+            let lo = max(0, nearest - 3)
+            let hi = min(spectrum.count - 1, nearest + 3)
+            let avg = spectrum[lo...hi].reduce(0, +) / Float(hi - lo + 1)
+            bandLevels.append(avg)
+        }
+        // Референс — медиана уровней полос
+        let sorted = bandLevels.sorted()
+        let reference = sorted[sorted.count / 2]
+        return bandLevels.map { level in
+            min(max(reference - level, Self.eqRange.lowerBound), Self.eqRange.upperBound)
+        }
+    }
+
+    // ── Named Presets ─────────────────────────────────────────
+    func saveNamedPreset(name: String) {
+        let p = NamedPreset(name: name.isEmpty ? "Preset \(namedPresets.count + 1)" : name,
+                            gains: eqGains)
+        namedPresets.append(p)
+        presetStore.saveNamed(namedPresets)
+        statusText = "Saved: \(p.name)"
+    }
+
+    func loadNamedPreset(_ preset: NamedPreset) {
+        guard preset.gains.count == Self.eqFrequencies.count else { return }
+        eqGains = preset.gains
+        applyGainsToBands()
+        presetStore.saveLastUsed(EQPreset(gains: eqGains))
+        statusText = "Loaded: \(preset.name)"
+    }
+
+    func deleteNamedPreset(_ preset: NamedPreset) {
+        namedPresets.removeAll { $0.id == preset.id }
+        presetStore.saveNamed(namedPresets)
+    }
+
+    // ── Legacy (оставляем совместимость) ─────────────────────
+    func savePreset() {
+        presetStore.saveLastUsed(EQPreset(gains: eqGains))
+        statusText = "EQ saved"
     }
 
     func refreshDevices() {
@@ -221,12 +322,20 @@ final class AudioEngineManager: ObservableObject {
         timer.schedule(deadline: .now() + 0.1, repeating: .milliseconds(50))
         timer.setEventHandler { [weak self] in
             guard let self, let analyzer = self.analyzer else { return }
-            // Не тратим CPU на FFT когда нет источника
             guard self.mode != .idle else { return }
             let frames = analyzer.makeFrames()
             Task { @MainActor in
-                self.preFrame = frames.pre
+                self.preFrame  = frames.pre
                 self.postFrame = frames.post
+                // Накапливаем для AutoEQ
+                if self.isAutoEQRunning, !frames.pre.magsDb.isEmpty {
+                    if self.accumMags.isEmpty {
+                        self.accumMags = frames.pre.magsDb
+                    } else if self.accumMags.count == frames.pre.magsDb.count {
+                        for i in self.accumMags.indices { self.accumMags[i] += frames.pre.magsDb[i] }
+                    }
+                    self.accumCount += 1
+                }
             }
         }
         timer.resume()
@@ -282,11 +391,9 @@ final class AudioEngineManager: ObservableObject {
     }
 
     private func loadPresetOnStart() {
-        guard let preset = presetStore.load() else { return }
-        let normalized = zip(Self.defaultGains.indices, preset.gains).map { _, value in
-            min(max(value, Self.eqRange.lowerBound), Self.eqRange.upperBound)
-        }
-        if normalized.count == Self.defaultGains.count {
+        guard let preset = presetStore.loadLastUsed() else { return }
+        let normalized = preset.gains.map { min(max($0, Self.eqRange.lowerBound), Self.eqRange.upperBound) }
+        if normalized.count == Self.eqFrequencies.count {
             eqGains = normalized
             applyGainsToBands()
             statusText = "Preset loaded"

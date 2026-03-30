@@ -1,8 +1,9 @@
 import SwiftUI
 
 struct SpectrumView: View {
-    let pre: SpectrumFrame
-    let post: SpectrumFrame
+    let pre:      SpectrumFrame
+    let post:     SpectrumFrame
+    let snapshot: SpectrumFrame
     let fMin: Float
     let fMax: Float
     let yMin: Float
@@ -25,6 +26,10 @@ struct SpectrumView: View {
                     let h = size.height - bottomPad - 8
 
                     drawGrid(context: &ctx, w: w, h: h, ox: leftPad, oy: 8)
+                    if !snapshot.freqs.isEmpty {
+                        drawLine(context: &ctx, frame: snapshot, color: .yellow.opacity(0.65),
+                                 w: w, h: h, ox: leftPad, oy: 8, dash: [5, 3])
+                    }
                     drawLine(context: &ctx, frame: pre,  color: .blue.opacity(0.85),  w: w, h: h, ox: leftPad, oy: 8)
                     drawLine(context: &ctx, frame: post, color: .green.opacity(0.95), w: w, h: h, ox: leftPad, oy: 8)
                 }
@@ -50,8 +55,11 @@ struct SpectrumView: View {
 
                 // ── Легенда ──────────────────────────────────────────
                 VStack(alignment: .leading, spacing: 3) {
-                    Label("Pre-EQ",  systemImage: "waveform").foregroundStyle(.blue)
-                    Label("Post-EQ", systemImage: "waveform").foregroundStyle(.green)
+                    Label("Pre-EQ",   systemImage: "waveform").foregroundStyle(.blue)
+                    Label("Post-EQ",  systemImage: "waveform").foregroundStyle(.green)
+                    if !snapshot.freqs.isEmpty {
+                        Label("Snapshot", systemImage: "camera").foregroundStyle(.yellow)
+                    }
                 }
                 .font(.caption2)
                 .padding(7)
@@ -113,7 +121,8 @@ struct SpectrumView: View {
     // ── Отрисовка ────────────────────────────────────────────────────
     private func drawLine(context: inout GraphicsContext,
                           frame: SpectrumFrame, color: Color,
-                          w: CGFloat, h: CGFloat, ox: CGFloat, oy: CGFloat) {
+                          w: CGFloat, h: CGFloat, ox: CGFloat, oy: CGFloat,
+                          dash: [CGFloat] = []) {
         guard frame.freqs.count > 2, frame.freqs.count == frame.magsDb.count else { return }
         var path = Path()
         for idx in frame.freqs.indices {
@@ -122,7 +131,9 @@ struct SpectrumView: View {
             if idx == 0 { path.move(to: CGPoint(x: x, y: y)) }
             else         { path.addLine(to: CGPoint(x: x, y: y)) }
         }
-        context.stroke(path, with: .color(color), lineWidth: 1.4)
+        var style = StrokeStyle(lineWidth: 1.4)
+        if !dash.isEmpty { style = StrokeStyle(lineWidth: 1.4, dash: dash) }
+        context.stroke(path, with: .color(color), style: style)
     }
 
     private func drawGrid(context: inout GraphicsContext,
