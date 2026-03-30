@@ -1,6 +1,8 @@
 __pycache__/
 *.pyc
 .DS_Store
+.build/
+.swiftpm/
 
 # Runtime artifacts
 guitar_eq_live.log

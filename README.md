@@ -5,6 +5,7 @@ Realtime analyzer and EQ tuning tool for guitar:
 - `guitar_eq.py` — main app with 7-band EQ, AutoEQ, pre/post spectrum view
 - `guitar_spectrum.py` — spectrum-only analyzer
 - `run_guitar_eq.command` — launcher script for macOS
+- `Package.swift` + `GuitarEQAnalyzerSwift/` — native Swift macOS MVP (SwiftUI + AVAudioEngine)
 
 ## Run
 
@@ -17,4 +18,13 @@ Or:
 
 ```bash
 python3 guitar_eq.py
+```
+
+## Swift macOS MVP
+
+Build and run:
+
+```bash
+swift build
+swift run
 ```
