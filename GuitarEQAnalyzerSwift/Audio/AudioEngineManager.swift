@@ -42,12 +42,20 @@ final class AudioEngineManager: ObservableObject {
     @Published var eqCurveFrame = SpectrumFrame(freqs: [], magsDb: [])
     @Published var micPermissionDenied = false
     @Published var canUndo = false
+    @Published var showPreEQ = true
+
+    // Сглаженный диапазон отображения (плавная адаптация, не скачет)
+    @Published var displayRangeLo: Float = -110
+    @Published var displayRangeHi: Float = -40
 
     // AutoEQ accumulator
     private var accumMags:  [Float] = []
     private var accumCount: Int     = 0
     private var autoEQTimer: DispatchSourceTimer?
     private let autoEQDuration: Double = 4.0
+
+    // Автосохранение — сохраняем через 1 сек после последнего движения слайдера
+    private var autoSaveTimer: DispatchSourceTimer?
 
     // Undo stack (последние 20 состояний)
     private var undoStack: [[Float]] = []
@@ -71,6 +79,8 @@ final class AudioEngineManager: ObservableObject {
     private var isRestartingGraph = false
 
     init() {
+        AppLog.clear()
+        AppLog.write("=== Guitar EQ Analyzer started ===")
         configureEQ()
         configureGraph()
         loadPresetOnStart()
@@ -81,6 +91,7 @@ final class AudioEngineManager: ObservableObject {
         namedPresets = presetStore.loadNamed()
         requestMicPermission()
         updateEQCurve()
+        AppLog.write("Init complete. inputDevices=\(inputDevices.count) outputDevices=\(outputDevices.count)")
     }
 
     func openFile(url: URL) {
@@ -116,6 +127,8 @@ final class AudioEngineManager: ObservableObject {
         applySourceMode()
     }
 
+    func togglePreEQ() { showPreEQ.toggle() }
+
     func toggleEQ() {
         eqEnabled.toggle()
         eqNode.bypass = !eqEnabled
@@ -133,6 +146,20 @@ final class AudioEngineManager: ObservableObject {
         eqGains[index] = min(max(value, Self.eqRange.lowerBound), Self.eqRange.upperBound)
         eqNode.bands[index].gain = eqGains[index]
         updateEQCurve()
+        scheduleAutoSave()
+    }
+
+    private func scheduleAutoSave() {
+        autoSaveTimer?.cancel()
+        let t = DispatchSource.makeTimerSource(queue: .main)
+        t.schedule(deadline: .now() + 1.0)
+        t.setEventHandler { [weak self] in
+            guard let self else { return }
+            self.presetStore.saveLastUsed(EQPreset(gains: self.eqGains))
+            self.autoSaveTimer = nil
+        }
+        t.resume()
+        autoSaveTimer = t
     }
 
     func undoEQ() {
@@ -144,7 +171,7 @@ final class AudioEngineManager: ObservableObject {
         statusText = "Undo"
     }
 
-    private func pushUndo() {
+    func pushUndo() {
         undoStack.append(eqGains)
         if undoStack.count > maxUndo { undoStack.removeFirst() }
         canUndo = true
@@ -288,23 +315,76 @@ final class AudioEngineManager: ObservableObject {
     func selectInputDevice(_ deviceID: AudioDeviceID?) {
         guard selectedInputID != deviceID else { return }
         selectedInputID = deviceID
-        if setInputDevice(deviceID) {
-            statusText = "Input: \(deviceName(for: deviceID, in: inputDevices))"
-        } else {
-            statusText = "Failed to set input device"
-        }
-        safeGraphRestartIfRunningMic()
+        changeDevice(newInput: deviceID, newOutput: nil)
     }
 
     func selectOutputDevice(_ deviceID: AudioDeviceID?) {
         guard selectedOutputID != deviceID else { return }
         selectedOutputID = deviceID
-        if setOutputDevice(deviceID) {
-            statusText = "Output: \(deviceName(for: deviceID, in: outputDevices))"
-        } else {
-            statusText = "Failed to set output device"
+        changeDevice(newInput: nil, newOutput: deviceID)
+    }
+
+    /// Полная смена устройства: stop → set → reconnect graph если input → start
+    private func changeDevice(newInput: AudioDeviceID?, newOutput: AudioDeviceID?) {
+        guard !isRestartingGraph else { return }
+        isRestartingGraph = true
+        defer { isRestartingGraph = false }
+
+        let wasRunning = engine.isRunning
+        AppLog.write("changeDevice: wasRunning=\(wasRunning) newInput=\(String(describing: newInput)) newOutput=\(String(describing: newOutput))")
+        if wasRunning { engine.stop() }
+
+        var inputOK  = true
+        var outputOK = true
+
+        if let id = newInput  { inputOK  = setInputDevice(id);  AppLog.write("setInputDevice(\(id)) → \(inputOK)") }
+        if let id = newOutput { outputOK = setOutputDevice(id); AppLog.write("setOutputDevice(\(id)) → \(outputOK)") }
+
+        // При смене input — формат мог измениться, перестраиваем граф
+        if newInput != nil { reconnectInputGraph() }
+
+        if wasRunning || mode != .idle {
+            do {
+                try engine.start()
+                AppLog.write("Engine restarted after device change")
+            }
+            catch {
+                statusText = "Engine start failed: \(error.localizedDescription)"
+                AppLog.write("Engine restart FAILED: \(error)")
+                return
+            }
         }
-        safeGraphRestartIfRunningMic()
+
+        applySourceMode()
+
+        if !inputOK  { statusText = "Input device not available" }
+        else if !outputOK { statusText = "Output device not available" }
+        else if newInput  != nil { statusText = "Input: \(deviceName(for: newInput,  in: inputDevices))" }
+        else if newOutput != nil { statusText = "Output: \(deviceName(for: newOutput, in: outputDevices))" }
+    }
+
+    /// Полная перестройка графа при смене входного устройства
+    private func reconnectInputGraph() {
+        removeTaps()
+        engine.disconnectNodeOutput(engine.inputNode)
+        engine.disconnectNodeOutput(playerNode)
+        engine.disconnectNodeOutput(micMixer)
+        engine.disconnectNodeOutput(fileMixer)
+        engine.disconnectNodeOutput(sourceMixer)
+        engine.disconnectNodeOutput(eqNode)
+
+        let hwFormat = engine.inputNode.inputFormat(forBus: 0)
+        analyzer = SpectrumAnalyzer(sampleRate: hwFormat.sampleRate)
+
+        engine.connect(engine.inputNode, to: micMixer,    format: hwFormat)
+        engine.connect(playerNode,       to: fileMixer,   format: nil)
+        engine.connect(micMixer,         to: sourceMixer, format: hwFormat)
+        engine.connect(fileMixer,        to: sourceMixer, format: nil)
+        engine.connect(sourceMixer,      to: eqNode,      format: hwFormat)
+        engine.connect(eqNode,           to: engine.mainMixerNode, format: hwFormat)
+
+        sourceMixer.outputVolume = 1.0
+        installTaps()
     }
 
     private func configureEQ() {
@@ -364,14 +444,14 @@ final class AudioEngineManager: ObservableObject {
     }
 
     private func startEngineIfNeeded() {
-        if let id = selectedInputID { _ = setInputDevice(id) }
-        if let id = selectedOutputID { _ = setOutputDevice(id) }
         guard !engine.isRunning else { return }
         do {
             try engine.start()
             statusText = "Engine running"
+            AppLog.write("Engine started OK")
         } catch {
             statusText = "Engine start failed: \(error.localizedDescription)"
+            AppLog.write("Engine start FAILED: \(error)")
         }
     }
 
@@ -385,6 +465,9 @@ final class AudioEngineManager: ObservableObject {
             Task { @MainActor in
                 self.preFrame  = frames.pre
                 self.postFrame = frames.post
+
+                // Диапазон фиксированный — адаптация убрана (она двигала всю шкалу)
+
                 // Накапливаем для AutoEQ
                 if self.isAutoEQRunning, !frames.pre.magsDb.isEmpty {
                     if self.accumMags.isEmpty {
@@ -401,13 +484,14 @@ final class AudioEngineManager: ObservableObject {
     }
 
     private func applySourceMode() {
+        AppLog.write("applySourceMode: \(mode)")
         switch mode {
         case .idle:
             micMixer.outputVolume = 0
             fileMixer.outputVolume = 0
             playerNode.pause()
             if engine.isRunning { engine.pause() }
-            statusText = "Idle"
+            statusText = "Ready"
         case .mic:
             startEngineIfNeeded()
             micMixer.outputVolume = 1
@@ -425,16 +509,14 @@ final class AudioEngineManager: ObservableObject {
     private func startFilePlayback(resetPosition: Bool) {
         guard let file = currentFile else {
             statusText = "No file loaded"
+            AppLog.write("startFilePlayback: no file loaded")
             return
         }
-        if resetPosition {
-            playerNode.stop()
-        }
+        playerNode.stop()          // всегда сбрасываем для надёжности
         scheduleFileLoop(file)
-        if !playerNode.isPlaying {
-            playerNode.play()
-        }
+        playerNode.play()
         statusText = "FILE PLAY: \(loadedFileName)"
+        AppLog.write("startFilePlayback: playing \(loadedFileName)")
     }
 
     private func scheduleFileLoop(_ file: AVAudioFile) {
@@ -450,21 +532,38 @@ final class AudioEngineManager: ObservableObject {
 
     // ── Mic Permission ────────────────────────────────────────
     private func requestMicPermission() {
-        switch AVCaptureDevice.authorizationStatus(for: .audio) {
-        case .authorized:
-            break
-        case .notDetermined:
-            AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
-                Task { @MainActor in
-                    if !granted {
-                        self?.micPermissionDenied = true
-                        self?.statusText = "Microphone access denied"
+        if #available(macOS 14.0, *) {
+            switch AVAudioApplication.shared.recordPermission {
+            case .granted: return
+            case .undetermined:
+                AVAudioApplication.requestRecordPermission { [weak self] granted in
+                    Task { @MainActor in
+                        if !granted {
+                            self?.micPermissionDenied = true
+                            self?.statusText = "Microphone access denied"
+                        }
                     }
                 }
+            default:
+                micPermissionDenied = true
+                statusText = "Microphone access denied — check System Settings"
             }
-        default:
-            micPermissionDenied = true
-            statusText = "Microphone access denied — check System Settings"
+        } else {
+            switch AVCaptureDevice.authorizationStatus(for: .audio) {
+            case .authorized: return
+            case .notDetermined:
+                AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
+                    Task { @MainActor in
+                        if !granted {
+                            self?.micPermissionDenied = true
+                            self?.statusText = "Microphone access denied"
+                        }
+                    }
+                }
+            default:
+                micPermissionDenied = true
+                statusText = "Microphone access denied — check System Settings"
+            }
         }
     }
 
@@ -523,21 +622,6 @@ final class AudioEngineManager: ObservableObject {
             applyGainsToBands()
             statusText = "Preset loaded"
         }
-    }
-
-    private func safeGraphRestartIfRunningMic() {
-        guard !isRestartingGraph else { return }
-        isRestartingGraph = true
-        let wasRunning = engine.isRunning
-        if wasRunning { engine.pause() }
-        if wasRunning {
-            do {
-                try engine.start()
-            } catch {
-                statusText = "Engine restart failed: \(error.localizedDescription)"
-            }
-        }
-        isRestartingGraph = false
     }
 
     private func deviceName(for id: AudioDeviceID?, in devices: [AudioDevice]) -> String {

@@ -10,19 +10,10 @@ struct SpectrumView: View {
     let yMin: Float   // нижний предел по умолчанию
     let yMax: Float   // верхний предел по умолчанию
 
-    // Адаптивный диапазон по текущему сигналу
-    private var dynRange: (lo: Float, hi: Float) {
-        let all = pre.magsDb + post.magsDb
-        guard !all.isEmpty else { return (yMin, yMax) }
-        let valid = all.filter { $0 > -140 }
-        guard !valid.isEmpty else { return (yMin, yMax) }
-        let hi  = valid.max()! + 8
-        let lo  = valid.min()! - 10
-        return (max(lo, yMin), min(hi, 0))
-    }
-
     var body: some View {
-        let (lo, hi) = dynRange
+        // yMin/yMax уже сглажены в AudioEngineManager — используем напрямую
+        let lo = yMin
+        let hi = yMax
         return GeometryReader { geo in
             let lp: CGFloat = 42      // left padding (Y labels)
             let bp: CGFloat = 20      // bottom padding (X labels)
@@ -44,10 +35,12 @@ struct SpectrumView: View {
                              w: w, h: h, ox: lp, oy: 8, lo: lo, hi: hi)
                     drawLine(ctx: &ctx, frame: post, color: .green.opacity(0.95),
                              w: w, h: h, ox: lp, oy: 8, lo: lo, hi: hi)
-                    if !eqCurve.freqs.isEmpty, !pre.magsDb.isEmpty {
-                        let mid    = pre.magsDb.reduce(0, +) / Float(pre.magsDb.count)
+                    if !eqCurve.freqs.isEmpty {
+                        // Якорим EQ curve на фиксированном уровне нижней четверти экрана
+                        // (не зависит от мгновенного сигнала — не скачет)
+                        let eqBaseline = lo + (hi - lo) * 0.20
                         let shifted = SpectrumFrame(freqs: eqCurve.freqs,
-                                                    magsDb: eqCurve.magsDb.map { $0 + mid })
+                                                    magsDb: eqCurve.magsDb.map { $0 + eqBaseline })
                         drawLine(ctx: &ctx, frame: shifted, color: .orange.opacity(0.85),
                                  w: w, h: h, ox: lp, oy: 8, lo: lo, hi: hi)
                     }
@@ -74,28 +67,39 @@ struct SpectrumView: View {
                 }
 
                 // ── Легенда ───────────────────────────────────────────
-                VStack(alignment: .leading, spacing: 3) {
-                    Label("Pre-EQ",   systemImage: "waveform").foregroundStyle(.blue)
-                    Label("Post-EQ",  systemImage: "waveform").foregroundStyle(.green)
-                    Label("EQ curve", systemImage: "slider.horizontal.3").foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: 4) {
+                    legendRow(.blue,   "Pre-EQ",   dash: [])
+                    legendRow(.green,  "Post-EQ",  dash: [])
+                    if !eqCurve.freqs.isEmpty {
+                        legendRow(.orange, "EQ curve", dash: [])
+                    }
                     if !snapshot.freqs.isEmpty {
-                        Label("Snapshot", systemImage: "camera").foregroundStyle(.yellow)
+                        legendRow(.yellow, "Snapshot", dash: [5, 3])
                     }
                 }
-                .font(.caption2)
+                .font(.system(size: 9))
                 .padding(7)
                 .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 6))
                 .padding(.top, 12).padding(.leading, lp + 6)
 
-                // ── Пик ──────────────────────────────────────────────
+                // ── Idle hint ────────────────────────────────────────
+                if pre.magsDb.isEmpty {
+                    VStack(spacing: 8) {
+                        Image(systemName: "waveform.badge.mic")
+                            .font(.system(size: 36))
+                            .foregroundStyle(.gray.opacity(0.35))
+                        Text("Click MIC or open a file to start analysis")
+                            .font(.caption)
+                            .foregroundStyle(.gray.opacity(0.45))
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .offset(x: lp / 2)
+                }
+
+                // ── Пик (только метка, без прыгающей вертикали) ──────
                 if let pk = peakInfo(frame: post) {
                     let px = lp + CGFloat(xFrac(pk.freq)) * w
                     let py = 8 + CGFloat(yFrac(db: pk.db, lo: lo, hi: hi)) * h
-                    Canvas { ctx, _ in
-                        var p = Path(); p.move(to: CGPoint(x: px, y: 8))
-                        p.addLine(to: CGPoint(x: px, y: 8 + h))
-                        ctx.stroke(p, with: .color(.yellow.opacity(0.3)), lineWidth: 0.8)
-                    }
                     Text("\(freqLabel(pk.freq))  \(String(format: "%.0f", pk.db)) dB")
                         .font(.system(size: 9, design: .monospaced))
                         .foregroundStyle(.yellow)
@@ -108,13 +112,30 @@ struct SpectrumView: View {
     }
 
     // ── Helpers ──────────────────────────────────────────────────────
+
+    @ViewBuilder
+    private func legendRow(_ color: Color, _ label: String, dash: [CGFloat]) -> some View {
+        HStack(spacing: 6) {
+            Canvas { ctx, size in
+                var p = Path()
+                p.move(to: CGPoint(x: 0, y: size.height / 2))
+                p.addLine(to: CGPoint(x: size.width, y: size.height / 2))
+                let style = dash.isEmpty ? StrokeStyle(lineWidth: 1.5)
+                                         : StrokeStyle(lineWidth: 1.5, dash: dash)
+                ctx.stroke(p, with: .color(color), style: style)
+            }
+            .frame(width: 20, height: 10)
+            Text(label).foregroundStyle(color)
+        }
+    }
+
     private var freqTicks: [Float]  { [80, 200, 400, 800, 1600, 3200, 6400] }
     private func freqLabel(_ f: Float) -> String { f >= 1000 ? "\(Int(f/1000))k" : "\(Int(f))" }
 
     private func dbTicks(lo: Float, hi: Float) -> [Float] {
-        stride(from: (hi / 10).rounded(.down) * 10,
-               through: (lo / 10).rounded(.up) * 10,
-               by: -10).map { $0 }
+        // Фиксированные значения — метки не появляются/исчезают резко при адаптации шкалы
+        stride(from: Float(0), through: Float(-110), by: Float(-10))
+            .filter { $0 >= lo && $0 <= hi }
     }
 
     private func xFrac(_ f: Float) -> Float {
@@ -161,6 +182,15 @@ struct SpectrumView: View {
             var p = Path(); p.move(to: .init(x: ox, y: y)); p.addLine(to: .init(x: ox + w, y: y))
             ctx.stroke(p, with: .color(.gray.opacity(0.15)), lineWidth: 0.7)
         }
+        // 0 dB — отдельная яркая линия-ориентир (если видна)
+        if lo <= 0 && 0 <= hi {
+            let y0 = oy + CGFloat(yFrac(db: 0, lo: lo, hi: hi)) * h
+            var p0 = Path()
+            p0.move(to: .init(x: ox, y: y0))
+            p0.addLine(to: .init(x: ox + w, y: y0))
+            ctx.stroke(p0, with: .color(.gray.opacity(0.55)), lineWidth: 1.0)
+        }
+
         var border = Path(); border.addRect(CGRect(x: ox, y: oy, width: w, height: h))
         ctx.stroke(border, with: .color(.gray.opacity(0.3)), lineWidth: 0.5)
     }
@@ -180,13 +210,15 @@ struct SpectrumView: View {
         let sm = smooth(mags, 20); let bg = smooth(sm, 100)
         var inZone = false; var zoneStart: Float = 0
         func fillZone(from f0: Float, to f1: Float) {
+            // Игнорируем слишком широкие зоны (> 1.5 октавы) — это не резонанс, а характер инструмента
+            guard f0 > 0, f1 / f0 < 2.83 else { return }
             let x0 = ox + CGFloat(xFrac(f0)) * w
             let x1 = ox + CGFloat(xFrac(f1)) * w
             var p = Path(); p.addRect(CGRect(x: x0, y: oy, width: max(x1-x0, 1), height: h))
-            ctx.fill(p, with: .color(.red.opacity(0.18)))
+            ctx.fill(p, with: .color(.red.opacity(0.22)))
         }
         for i in 0..<n {
-            let hot = (sm[i] - bg[i]) > 5
+            let hot = (sm[i] - bg[i]) > 8    // порог повышен: 5 → 8 dB
             if hot && !inZone  { inZone = true;  zoneStart = frame.freqs[i] }
             if !hot && inZone  { inZone = false; fillZone(from: zoneStart, to: frame.freqs[i]) }
         }

@@ -13,33 +13,35 @@ struct ContentView: View {
 
             // ── Спектр ───────────────────────────────────────────────
             SpectrumView(
-                pre:      engine.preFrame,
+                pre:      engine.showPreEQ ? engine.preFrame : SpectrumFrame(freqs: [], magsDb: []),
                 post:     engine.postFrame,
                 snapshot: engine.snapshotFrame,
                 eqCurve:  engine.eqCurveFrame,
                 fMin: 60,
                 fMax: 8000,
-                yMin: -110,
-                yMax: -40
+                yMin: -120,
+                yMax: -10
             )
             .frame(height: 380)
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay(alignment: .topTrailing) {
-                // Пиктограмма режима
-                Label(engine.mode == .idle ? "Idle" : engine.mode == .mic ? "MIC" : "FILE",
-                      systemImage: engine.mode == .mic ? "mic.fill" : engine.mode == .file ? "doc.fill" : "pause.circle")
-                    .font(.caption2)
-                    .foregroundStyle(engine.mode == .idle ? .gray : .white)
-                    .padding(.horizontal, 7).padding(.vertical, 3)
-                    .background(modeColor.opacity(0.75), in: Capsule())
-                    .padding(10)
+                // Бейдж режима — только когда активен
+                if engine.mode != .idle {
+                    Label(engine.mode == .mic ? "MIC" : "FILE",
+                          systemImage: engine.mode == .mic ? "mic.fill" : "doc.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 7).padding(.vertical, 3)
+                        .background(modeColor.opacity(0.85), in: Capsule())
+                        .padding(10)
+                }
             }
 
             Divider()
 
             // ── Источник звука ───────────────────────────────────────
             HStack(spacing: 8) {
-                // MIC
+                // ── Группа: Источник ─────────────────────────────────
                 Button {
                     engine.toggleMic()
                 } label: {
@@ -48,7 +50,6 @@ struct ContentView: View {
                 .buttonStyle(.borderedProminent)
                 .tint(engine.mode == .mic ? .green : .gray.opacity(0.4))
 
-                // Файл
                 Button {
                     showFileImporter = true
                 } label: {
@@ -66,17 +67,15 @@ struct ContentView: View {
                 .tint(engine.mode == .file ? .orange : .blue)
                 .disabled(engine.loadedFileName.isEmpty && engine.mode != .file)
 
-                // Имя файла
                 if !engine.loadedFileName.isEmpty {
                     Label(engine.loadedFileName, systemImage: "music.note")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
-                        .frame(maxWidth: 220, alignment: .leading)
+                        .frame(maxWidth: 200, alignment: .leading)
                 }
 
-                // Snapshot
                 Button {
                     engine.takeSnapshot()
                 } label: {
@@ -93,9 +92,9 @@ struct ContentView: View {
                     .help("Clear snapshot")
                 }
 
-                Spacer()
+                Divider().frame(height: 22)
 
-                // AutoEQ
+                // ── Группа: EQ ───────────────────────────────────────
                 Button {
                     engine.startAutoEQ()
                 } label: {
@@ -114,7 +113,13 @@ struct ContentView: View {
                 .disabled(engine.isAutoEQRunning || engine.mode == .idle)
                 .help("Play guitar for 4 sec, AutoEQ will flatten the response")
 
-                // EQ
+                Button { engine.togglePreEQ() } label: {
+                    Label(engine.showPreEQ ? "Pre" : "Pre", systemImage: "waveform")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(engine.showPreEQ ? .blue.opacity(0.7) : .gray.opacity(0.35))
+                .help("Show/hide Pre-EQ spectrum (blue)")
+
                 Button {
                     engine.toggleEQ()
                 } label: {
@@ -133,7 +138,9 @@ struct ContentView: View {
                 .disabled(!engine.canUndo)
                 .keyboardShortcut("z", modifiers: .command)
 
-                // Presets
+                Divider().frame(height: 22)
+
+                // ── Группа: Данные ───────────────────────────────────
                 Button {
                     showPresetsPanel.toggle()
                 } label: {
@@ -144,7 +151,6 @@ struct ContentView: View {
                     PresetsPanel(engine: engine, showSaveSheet: $showSaveSheet, newPresetName: $newPresetName)
                 }
 
-                // Export
                 Button {
                     engine.copyEQToClipboard()
                 } label: {
@@ -152,6 +158,8 @@ struct ContentView: View {
                 }
                 .buttonStyle(.bordered)
                 .help("Copy EQ settings to clipboard (paste into DAW or notes)")
+
+                Spacer()
             }
 
             // ── Устройства ───────────────────────────────────────────
@@ -193,6 +201,17 @@ struct ContentView: View {
             Divider()
 
             // ── EQ Слайдеры ──────────────────────────────────────────
+            HStack(spacing: 6) {
+                Text("EQ BANDS")
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                Rectangle()
+                    .fill(.gray.opacity(0.25))
+                    .frame(height: 1)
+            }
+            .padding(.horizontal, 4)
+            .padding(.top, 2)
+
             HStack(alignment: .bottom, spacing: 0) {
                 ForEach(Array(AudioEngineManager.eqFrequencies.enumerated()), id: \.offset) { idx, freq in
                     EQBandSlider(
@@ -201,7 +220,8 @@ struct ContentView: View {
                             get: { Double(engine.eqGains[idx]) },
                             set: { engine.updateGain(index: idx, value: Float($0)) }
                         ),
-                        range: Double(AudioEngineManager.eqRange.lowerBound)...Double(AudioEngineManager.eqRange.upperBound)
+                        range: Double(AudioEngineManager.eqRange.lowerBound)...Double(AudioEngineManager.eqRange.upperBound),
+                        onDragStart: { engine.pushUndo() }
                     )
                 }
             }
@@ -322,20 +342,22 @@ struct EQBandSlider: View {
     let label: String
     @Binding var gain: Double
     let range: ClosedRange<Double>
+    var onDragStart: (() -> Void)? = nil
 
     private let sliderHeight: CGFloat = 110
 
     var body: some View {
         GeometryReader { geo in
             VStack(spacing: 4) {
-                // dB значение
+                // dB значение — фиксированная ширина, чтобы не прыгало
                 Text(String(format: gain >= 0 ? "+%.1f" : "%.1f", gain))
                     .font(.system(size: 9, design: .monospaced))
                     .foregroundStyle(gainColor)
-                    .frame(height: 14)
+                    .frame(width: 36, height: 14)
 
                 // Вертикальный слайдер через drag
-                VerticalSlider(value: $gain, range: range, height: sliderHeight)
+                VerticalSlider(value: $gain, range: range, height: sliderHeight,
+                               onDragStart: onDragStart)
 
                 // Метка частоты
                 Text(label)
@@ -361,6 +383,7 @@ struct VerticalSlider: View {
     @Binding var value: Double
     let range: ClosedRange<Double>
     let height: CGFloat
+    var onDragStart: (() -> Void)? = nil
 
     @State private var dragStart: Double?
 
@@ -404,10 +427,14 @@ struct VerticalSlider: View {
                     .shadow(radius: 1)
                     .offset(y: thumbY - h / 2)
             }
+            .contentShape(Rectangle())   // расширяем зону захвата на весь блок
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { drag in
-                        if dragStart == nil { dragStart = value }
+                        if dragStart == nil {
+                            dragStart = value
+                            onDragStart?()   // push undo один раз в начале жеста
+                        }
                         let delta = -Double(drag.translation.height / h) * (range.upperBound - range.lowerBound)
                         value = min(max((dragStart ?? value) + delta, range.lowerBound), range.upperBound)
                     }
