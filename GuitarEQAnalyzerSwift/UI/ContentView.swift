@@ -143,6 +143,15 @@ struct ContentView: View {
                 .popover(isPresented: $showPresetsPanel) {
                     PresetsPanel(engine: engine, showSaveSheet: $showSaveSheet, newPresetName: $newPresetName)
                 }
+
+                // Export
+                Button {
+                    engine.copyEQToClipboard()
+                } label: {
+                    Label("Copy EQ", systemImage: "doc.on.clipboard")
+                }
+                .buttonStyle(.bordered)
+                .help("Copy EQ settings to clipboard (paste into DAW or notes)")
             }
 
             // ── Устройства ───────────────────────────────────────────

@@ -1,3 +1,4 @@
+import AppKit
 import AVFoundation
 import AudioToolbox
 import CoreAudio
@@ -194,6 +195,8 @@ final class AudioEngineManager: ObservableObject {
             return
         }
         let avg  = accumMags.map { $0 / Float(accumCount) }
+        // Снэпшот «до» чтобы сразу видеть разницу
+        snapshotFrame = preFrame
         pushUndo()
         let newGains = computeAutoEQGains(spectrum: avg, freqs: preFrame.freqs)
         eqGains = newGains
@@ -243,6 +246,26 @@ final class AudioEngineManager: ObservableObject {
     func deleteNamedPreset(_ preset: NamedPreset) {
         namedPresets.removeAll { $0.id == preset.id }
         presetStore.saveNamed(namedPresets)
+    }
+
+    // ── Export ───────────────────────────────────────────────
+    func exportEQText() -> String {
+        var lines = ["Guitar EQ Settings", "─────────────────────"]
+        for (i, f) in Self.eqFrequencies.enumerated() {
+            let g    = eqGains[i]
+            let sign = g >= 0 ? "+" : ""
+            let freq = f >= 1000 ? String(format: "%.0f kHz", f / 1000) : String(format: "%.0f Hz", f)
+            lines.append(String(format: "  %-8@ %@%.1f dB", freq as NSString, sign, g))
+        }
+        lines.append("─────────────────────")
+        lines.append("Q = \(Self.eqQ)  |  ±\(Int(Self.eqRange.upperBound)) dB")
+        return lines.joined(separator: "\n")
+    }
+
+    func copyEQToClipboard() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(exportEQText(), forType: .string)
+        statusText = "EQ copied to clipboard"
     }
 
     // ── Legacy (оставляем совместимость) ─────────────────────
