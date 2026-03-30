@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.DS_Store
+
+# Runtime artifacts
+guitar_eq_live.log
+eq_saved.json
+eq_preset_*.json
+
+# Local audio/test assets
+*.wav
+*.mp3
+*.flac
+*.m4a
