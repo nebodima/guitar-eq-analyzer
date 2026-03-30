@@ -93,7 +93,6 @@ final class AudioEngineManager: ObservableObject {
     func toggleEQ() {
         eqEnabled.toggle()
         eqNode.bypass = !eqEnabled
-        eqNode.globalGain = -9.0
     }
 
     func resetEQ() {
@@ -222,6 +221,8 @@ final class AudioEngineManager: ObservableObject {
         timer.schedule(deadline: .now() + 0.1, repeating: .milliseconds(50))
         timer.setEventHandler { [weak self] in
             guard let self, let analyzer = self.analyzer else { return }
+            // Не тратим CPU на FFT когда нет источника
+            guard self.mode != .idle else { return }
             let frames = analyzer.makeFrames()
             Task { @MainActor in
                 self.preFrame = frames.pre
@@ -233,18 +234,21 @@ final class AudioEngineManager: ObservableObject {
     }
 
     private func applySourceMode() {
-        startEngineIfNeeded()
         switch mode {
         case .idle:
             micMixer.outputVolume = 0
             fileMixer.outputVolume = 0
             playerNode.pause()
+            if engine.isRunning { engine.pause() }
+            statusText = "Idle"
         case .mic:
+            startEngineIfNeeded()
             micMixer.outputVolume = 1
             fileMixer.outputVolume = 0
             playerNode.pause()
             statusText = "MIC ON (\(deviceName(for: selectedInputID, in: inputDevices)))"
         case .file:
+            startEngineIfNeeded()
             micMixer.outputVolume = 0
             fileMixer.outputVolume = 1
             startFilePlayback(resetPosition: false)

@@ -6,7 +6,9 @@ struct ContentView: View {
     @State private var showFileImporter = false
 
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 8) {
+
+            // ── Спектр ───────────────────────────────────────────────
             SpectrumView(
                 pre: engine.preFrame,
                 post: engine.postFrame,
@@ -15,123 +17,261 @@ struct ContentView: View {
                 yMin: -110,
                 yMax: -40
             )
-            .frame(height: 430)
+            .frame(height: 380)
             .clipShape(RoundedRectangle(cornerRadius: 8))
-
-            HStack(spacing: 8) {
-                Button(engine.mode == .mic ? "MIC ON" : "MIC OFF") {
-                    engine.toggleMic()
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(engine.mode == .mic ? .green : .gray)
-
-                Button("Open File") {
-                    showFileImporter = true
-                }
-                .buttonStyle(.borderedProminent)
-
-                Button(engine.mode == .file ? "Stop File" : "Play File") {
-                    engine.toggleFilePlayback()
-                }
-                .buttonStyle(.bordered)
-
-                Button(engine.eqEnabled ? "EQ ON" : "EQ OFF") {
-                    engine.toggleEQ()
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(engine.eqEnabled ? .blue : .gray)
-
-                Button("Reset") {
-                    engine.resetEQ()
-                }
-                .buttonStyle(.bordered)
-
-                Button("Save EQ") {
-                    engine.savePreset()
-                }
-                .buttonStyle(.bordered)
-
-                Spacer()
+            .overlay(alignment: .topTrailing) {
+                // Пиктограмма режима
+                Label(engine.mode == .idle ? "Idle" : engine.mode == .mic ? "MIC" : "FILE",
+                      systemImage: engine.mode == .mic ? "mic.fill" : engine.mode == .file ? "doc.fill" : "pause.circle")
+                    .font(.caption2)
+                    .foregroundStyle(engine.mode == .idle ? .gray : .white)
+                    .padding(.horizontal, 7).padding(.vertical, 3)
+                    .background(modeColor.opacity(0.75), in: Capsule())
+                    .padding(10)
             }
 
-            HStack {
-                Picker("Input", selection: Binding(
+            Divider()
+
+            // ── Источник звука ───────────────────────────────────────
+            HStack(spacing: 8) {
+                // MIC
+                Button {
+                    engine.toggleMic()
+                } label: {
+                    Label(engine.mode == .mic ? "MIC ON" : "MIC", systemImage: "mic.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(engine.mode == .mic ? .green : .gray.opacity(0.4))
+
+                // Файл
+                Button {
+                    showFileImporter = true
+                } label: {
+                    Label("Open File", systemImage: "folder")
+                }
+                .buttonStyle(.bordered)
+
+                Button {
+                    engine.toggleFilePlayback()
+                } label: {
+                    Label(engine.mode == .file ? "Stop" : "Play File",
+                          systemImage: engine.mode == .file ? "stop.fill" : "play.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(engine.mode == .file ? .orange : .blue)
+                .disabled(engine.loadedFileName.isEmpty && engine.mode != .file)
+
+                // Имя файла
+                if !engine.loadedFileName.isEmpty {
+                    Label(engine.loadedFileName, systemImage: "music.note")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .frame(maxWidth: 220, alignment: .leading)
+                }
+
+                Spacer()
+
+                // EQ
+                Button {
+                    engine.toggleEQ()
+                } label: {
+                    Label(engine.eqEnabled ? "EQ ON" : "EQ OFF", systemImage: "slider.horizontal.3")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(engine.eqEnabled ? .blue : .gray.opacity(0.4))
+
+                Button("Reset EQ") { engine.resetEQ() }
+                    .buttonStyle(.bordered)
+
+                Button { engine.savePreset() } label: {
+                    Label("Save EQ", systemImage: "square.and.arrow.down")
+                }
+                .buttonStyle(.bordered)
+            }
+
+            // ── Устройства ───────────────────────────────────────────
+            HStack(spacing: 12) {
+                Label("In:", systemImage: "mic").font(.caption).foregroundStyle(.secondary)
+                Picker("", selection: Binding(
                     get: { engine.selectedInputID ?? 0 },
                     set: { engine.selectInputDevice($0) }
                 )) {
-                    ForEach(engine.inputDevices) { device in
-                        Text(device.name).tag(device.id)
-                    }
+                    ForEach(engine.inputDevices) { Text($0.name).tag($0.id) }
                 }
-                .frame(minWidth: 360)
+                .labelsHidden()
+                .frame(maxWidth: 280)
 
-                Picker("Output", selection: Binding(
+                Label("Out:", systemImage: "speaker.wave.2").font(.caption).foregroundStyle(.secondary)
+                Picker("", selection: Binding(
                     get: { engine.selectedOutputID ?? 0 },
                     set: { engine.selectOutputDevice($0) }
                 )) {
-                    ForEach(engine.outputDevices) { device in
-                        Text(device.name).tag(device.id)
-                    }
+                    ForEach(engine.outputDevices) { Text($0.name).tag($0.id) }
                 }
-                .frame(minWidth: 360)
+                .labelsHidden()
+                .frame(maxWidth: 280)
 
-                Button("Refresh Devices") {
-                    engine.refreshDevices()
+                Button { engine.refreshDevices() } label: {
+                    Image(systemName: "arrow.clockwise")
                 }
                 .buttonStyle(.bordered)
-            }
+                .help("Refresh device list")
 
-            HStack(alignment: .bottom, spacing: 14) {
-                ForEach(Array(AudioEngineManager.eqFrequencies.enumerated()), id: \.offset) { idx, freq in
-                    VStack(spacing: 6) {
-                        Text(label(for: freq))
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                        Slider(
-                            value: Binding(
-                                get: { Double(engine.eqGains[idx]) },
-                                set: { engine.updateGain(index: idx, value: Float($0)) }
-                            ),
-                            in: Double(AudioEngineManager.eqRange.lowerBound)...Double(AudioEngineManager.eqRange.upperBound),
-                            step: 0.1
-                        )
-                        .rotationEffect(.degrees(-90))
-                        .frame(width: 120, height: 22)
-                        Text(String(format: "%.1f dB", engine.eqGains[idx]))
-                            .font(.caption2)
-                            .foregroundStyle(.green)
-                    }
-                    .frame(width: 72)
-                }
-            }
-            .padding(.top, 8)
-
-            HStack {
-                Text(engine.loadedFileName.isEmpty ? "No file loaded" : engine.loadedFileName)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
                 Spacer()
+
                 Text(engine.statusText)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(statusColor)
+                    .lineLimit(1)
             }
+
+            Divider()
+
+            // ── EQ Слайдеры ──────────────────────────────────────────
+            HStack(alignment: .bottom, spacing: 0) {
+                ForEach(Array(AudioEngineManager.eqFrequencies.enumerated()), id: \.offset) { idx, freq in
+                    EQBandSlider(
+                        label: freqLabel(freq),
+                        gain: Binding(
+                            get: { Double(engine.eqGains[idx]) },
+                            set: { engine.updateGain(index: idx, value: Float($0)) }
+                        ),
+                        range: Double(AudioEngineManager.eqRange.lowerBound)...Double(AudioEngineManager.eqRange.upperBound)
+                    )
+                }
+            }
+            .padding(.horizontal, 4)
+            .opacity(engine.eqEnabled ? 1.0 : 0.4)
         }
         .padding(12)
-        .fileImporter(
-            isPresented: $showFileImporter,
-            allowedContentTypes: [.audio],
-            allowsMultipleSelection: false
-        ) { result in
+        .fileImporter(isPresented: $showFileImporter, allowedContentTypes: [.audio],
+                      allowsMultipleSelection: false) { result in
             guard case let .success(urls) = result, let url = urls.first else { return }
             engine.openFile(url: url)
         }
     }
 
-    private func label(for freq: Float) -> String {
-        if freq >= 1000 {
-            let k = freq / 1000
-            return floor(k) == k ? "\(Int(k))kHz" : String(format: "%.1fkHz", k)
+    private var modeColor: Color {
+        switch engine.mode {
+        case .idle: return .gray
+        case .mic:  return .green
+        case .file: return .blue
         }
-        return "\(Int(freq))Hz"
+    }
+
+    private var statusColor: Color {
+        if engine.statusText.lowercased().contains("error") || engine.statusText.lowercased().contains("fail") {
+            return .red
+        }
+        return .secondary
+    }
+
+    private func freqLabel(_ f: Float) -> String {
+        f >= 1000 ? (floor(f / 1000) == f / 1000 ? "\(Int(f / 1000))k" : String(format: "%.1fk", f / 1000)) : "\(Int(f))"
+    }
+}
+
+// ── Отдельный компонент: вертикальный слайдер полосы EQ ──────────────
+struct EQBandSlider: View {
+    let label: String
+    @Binding var gain: Double
+    let range: ClosedRange<Double>
+
+    private let sliderHeight: CGFloat = 110
+
+    var body: some View {
+        GeometryReader { geo in
+            VStack(spacing: 4) {
+                // dB значение
+                Text(String(format: gain >= 0 ? "+%.1f" : "%.1f", gain))
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(gainColor)
+                    .frame(height: 14)
+
+                // Вертикальный слайдер через drag
+                VerticalSlider(value: $gain, range: range, height: sliderHeight)
+
+                // Метка частоты
+                Text(label)
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+                    .frame(height: 14)
+            }
+            .frame(width: geo.size.width, alignment: .center)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: sliderHeight + 36)
+    }
+
+    private var gainColor: Color {
+        if gain > 0.5  { return .green }
+        if gain < -0.5 { return .orange }
+        return .secondary
+    }
+}
+
+// ── Нативный вертикальный слайдер через DragGesture ──────────────────
+struct VerticalSlider: View {
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    let height: CGFloat
+
+    @State private var dragStart: Double?
+
+    var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width
+            let h = geo.size.height
+            let frac = CGFloat((value - range.lowerBound) / (range.upperBound - range.lowerBound))
+            let thumbY = h * (1 - frac)
+
+            ZStack {
+                // Трек
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(.gray.opacity(0.2))
+                    .frame(width: 4)
+                    .frame(maxWidth: .infinity)
+
+                // Заливка от нуля
+                let zeroFrac = CGFloat(-range.lowerBound / (range.upperBound - range.lowerBound))
+                let zeroY = h * (1 - zeroFrac)
+                let fillTop  = min(thumbY, zeroY)
+                let fillH    = abs(zeroY - thumbY)
+
+                Rectangle()
+                    .fill(value >= 0 ? Color.green.opacity(0.5) : Color.orange.opacity(0.5))
+                    .frame(width: 4, height: max(fillH, 1))
+                    .frame(maxWidth: .infinity)
+                    .offset(y: fillTop - h / 2 + fillH / 2)
+
+                // Нулевая линия
+                Rectangle()
+                    .fill(.gray.opacity(0.4))
+                    .frame(width: 12, height: 1)
+                    .frame(maxWidth: .infinity)
+                    .offset(y: zeroY - h / 2)
+
+                // Thumb
+                Circle()
+                    .fill(.white)
+                    .frame(width: 12, height: 12)
+                    .shadow(radius: 1)
+                    .offset(y: thumbY - h / 2)
+            }
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { drag in
+                        if dragStart == nil { dragStart = value }
+                        let delta = -Double(drag.translation.height / h) * (range.upperBound - range.lowerBound)
+                        value = min(max((dragStart ?? value) + delta, range.lowerBound), range.upperBound)
+                    }
+                    .onEnded { _ in dragStart = nil }
+            )
+            .onTapGesture(count: 2) { value = 0 }  // двойной тап — сброс в 0
+        }
+        .frame(width: 30, height: height)
+        .frame(maxWidth: .infinity)
     }
 }
