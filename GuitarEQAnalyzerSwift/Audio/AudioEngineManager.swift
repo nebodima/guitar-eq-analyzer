@@ -40,12 +40,21 @@ final class AudioEngineManager: ObservableObject {
     @Published var namedPresets: [NamedPreset] = []
     @Published var eqCurveFrame = SpectrumFrame(freqs: [], magsDb: [])
     @Published var micPermissionDenied = false
+    @Published var canUndo = false
 
     // AutoEQ accumulator
     private var accumMags:  [Float] = []
     private var accumCount: Int     = 0
     private var autoEQTimer: DispatchSourceTimer?
     private let autoEQDuration: Double = 4.0
+
+    // Undo stack (последние 20 состояний)
+    private var undoStack: [[Float]] = []
+    private let maxUndo = 20
+
+    // Гитарная целевая кривая AutoEQ (отклонение от медианы, dB)
+    // 80  200  400  800  1600  3200  6400 Hz
+    static let guitarTargetOffset: [Float] = [-1.5, -2.0, -1.0, 0.0, +1.5, +2.0, +1.0]
 
     private let engine = AVAudioEngine()
     private let playerNode = AVAudioPlayerNode()
@@ -112,6 +121,7 @@ final class AudioEngineManager: ObservableObject {
     }
 
     func resetEQ() {
+        pushUndo()
         eqGains = Array(repeating: 0, count: Self.eqFrequencies.count)
         applyGainsToBands()
         updateEQCurve()
@@ -122,6 +132,21 @@ final class AudioEngineManager: ObservableObject {
         eqGains[index] = min(max(value, Self.eqRange.lowerBound), Self.eqRange.upperBound)
         eqNode.bands[index].gain = eqGains[index]
         updateEQCurve()
+    }
+
+    func undoEQ() {
+        guard let prev = undoStack.popLast() else { return }
+        eqGains = prev
+        applyGainsToBands()
+        updateEQCurve()
+        canUndo = !undoStack.isEmpty
+        statusText = "Undo"
+    }
+
+    private func pushUndo() {
+        undoStack.append(eqGains)
+        if undoStack.count > maxUndo { undoStack.removeFirst() }
+        canUndo = true
     }
 
     // ── Snapshot ─────────────────────────────────────────────
@@ -169,6 +194,7 @@ final class AudioEngineManager: ObservableObject {
             return
         }
         let avg  = accumMags.map { $0 / Float(accumCount) }
+        pushUndo()
         let newGains = computeAutoEQGains(spectrum: avg, freqs: preFrame.freqs)
         eqGains = newGains
         applyGainsToBands()
@@ -181,18 +207,19 @@ final class AudioEngineManager: ObservableObject {
         guard !freqs.isEmpty else { return eqGains }
         var bandLevels: [Float] = []
         for bandFreq in Self.eqFrequencies {
-            // Ищем ближайший бин и усредняем ±3 бина
             let nearest = freqs.enumerated().min(by: { abs($0.element - bandFreq) < abs($1.element - bandFreq) })?.offset ?? 0
-            let lo = max(0, nearest - 3)
-            let hi = min(spectrum.count - 1, nearest + 3)
+            let lo  = max(0, nearest - 3)
+            let hi  = min(spectrum.count - 1, nearest + 3)
             let avg = spectrum[lo...hi].reduce(0, +) / Float(hi - lo + 1)
             bandLevels.append(avg)
         }
-        // Референс — медиана уровней полос
-        let sorted = bandLevels.sorted()
+        // Референс — медиана
+        let sorted    = bandLevels.sorted()
         let reference = sorted[sorted.count / 2]
-        return bandLevels.map { level in
-            min(max(reference - level, Self.eqRange.lowerBound), Self.eqRange.upperBound)
+        // Коррекция = (reference - measured) + guitarTargetOffset
+        return zip(bandLevels, Self.guitarTargetOffset).map { level, targetOffset in
+            let correction = (reference - level) + targetOffset
+            return min(max(correction, Self.eqRange.lowerBound), Self.eqRange.upperBound)
         }
     }
 

@@ -126,6 +126,13 @@ struct ContentView: View {
                 Button("Reset EQ") { engine.resetEQ() }
                     .buttonStyle(.bordered)
 
+                Button { engine.undoEQ() } label: {
+                    Label("Undo", systemImage: "arrow.uturn.backward")
+                }
+                .buttonStyle(.bordered)
+                .disabled(!engine.canUndo)
+                .keyboardShortcut("z", modifiers: .command)
+
                 // Presets
                 Button {
                     showPresetsPanel.toggle()
