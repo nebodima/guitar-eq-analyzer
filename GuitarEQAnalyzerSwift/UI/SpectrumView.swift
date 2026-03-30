@@ -4,6 +4,7 @@ struct SpectrumView: View {
     let pre:      SpectrumFrame
     let post:     SpectrumFrame
     let snapshot: SpectrumFrame
+    let eqCurve:  SpectrumFrame   // АЧХ эквалайзера
     let fMin: Float
     let fMax: Float
     let yMin: Float
@@ -26,12 +27,25 @@ struct SpectrumView: View {
                     let h = size.height - bottomPad - 8
 
                     drawGrid(context: &ctx, w: w, h: h, ox: leftPad, oy: 8)
+
+                    // Красные зоны резонансов (pre-EQ)
+                    drawResonanceZones(context: &ctx, frame: pre, w: w, h: h, ox: leftPad, oy: 8)
+
                     if !snapshot.freqs.isEmpty {
                         drawLine(context: &ctx, frame: snapshot, color: .yellow.opacity(0.65),
                                  w: w, h: h, ox: leftPad, oy: 8, dash: [5, 3])
                     }
                     drawLine(context: &ctx, frame: pre,  color: .blue.opacity(0.85),  w: w, h: h, ox: leftPad, oy: 8)
                     drawLine(context: &ctx, frame: post, color: .green.opacity(0.95), w: w, h: h, ox: leftPad, oy: 8)
+
+                    // Кривая EQ (смещена к центру спектра)
+                    if !eqCurve.freqs.isEmpty, !pre.magsDb.isEmpty {
+                        let offset = pre.magsDb.reduce(0, +) / Float(pre.magsDb.count)
+                        let shifted = SpectrumFrame(freqs: eqCurve.freqs,
+                                                    magsDb: eqCurve.magsDb.map { $0 + offset })
+                        drawLine(context: &ctx, frame: shifted, color: .orange.opacity(0.85),
+                                 w: w, h: h, ox: leftPad, oy: 8)
+                    }
                 }
 
                 // ── Метки dB (левая ось) ─────────────────────────────
@@ -57,6 +71,7 @@ struct SpectrumView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Label("Pre-EQ",   systemImage: "waveform").foregroundStyle(.blue)
                     Label("Post-EQ",  systemImage: "waveform").foregroundStyle(.green)
+                    Label("EQ curve", systemImage: "slider.horizontal.3").foregroundStyle(.orange)
                     if !snapshot.freqs.isEmpty {
                         Label("Snapshot", systemImage: "camera").foregroundStyle(.yellow)
                     }
@@ -134,6 +149,54 @@ struct SpectrumView: View {
         var style = StrokeStyle(lineWidth: 1.4)
         if !dash.isEmpty { style = StrokeStyle(lineWidth: 1.4, dash: dash) }
         context.stroke(path, with: .color(color), style: style)
+    }
+
+    /// Подсвечивает частоты где спектр выступает >5 dB над локальным фоном
+    private func drawResonanceZones(context: inout GraphicsContext,
+                                    frame: SpectrumFrame,
+                                    w: CGFloat, h: CGFloat, ox: CGFloat, oy: CGFloat) {
+        guard frame.magsDb.count > 40 else { return }
+        let mags = frame.magsDb
+        let n    = mags.count
+
+        // Узкое сглаживание (детали)
+        func smooth(_ arr: [Float], _ k: Int) -> [Float] {
+            var out = [Float](repeating: 0, count: arr.count)
+            for i in 0..<arr.count {
+                let lo = max(0, i - k); let hi = min(arr.count - 1, i + k)
+                out[i] = arr[lo...hi].reduce(0, +) / Float(hi - lo + 1)
+            }
+            return out
+        }
+
+        let sm  = smooth(mags, 20)   // ~narrow
+        let bg  = smooth(sm, 100)    // ~wide background
+        let threshold: Float = 5.0
+
+        var inZone = false
+        var zoneStart: Float = 0
+
+        for i in 0..<n {
+            let hot = (sm[i] - bg[i]) > threshold
+            if hot && !inZone {
+                inZone = true
+                zoneStart = frame.freqs[i]
+            } else if !hot && inZone {
+                inZone = false
+                let x0 = ox + CGFloat(xFrac(freq: zoneStart)) * w
+                let x1 = ox + CGFloat(xFrac(freq: frame.freqs[i])) * w
+                var p = Path()
+                p.addRect(CGRect(x: x0, y: oy, width: max(x1 - x0, 1), height: h))
+                context.fill(p, with: .color(.red.opacity(0.18)))
+            }
+        }
+        if inZone, let last = frame.freqs.last {
+            let x0 = ox + CGFloat(xFrac(freq: zoneStart)) * w
+            let x1 = ox + CGFloat(xFrac(freq: last)) * w
+            var p = Path()
+            p.addRect(CGRect(x: x0, y: oy, width: max(x1 - x0, 1), height: h))
+            context.fill(p, with: .color(.red.opacity(0.18)))
+        }
     }
 
     private func drawGrid(context: inout GraphicsContext,

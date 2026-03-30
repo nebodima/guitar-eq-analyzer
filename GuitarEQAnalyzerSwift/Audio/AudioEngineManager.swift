@@ -2,6 +2,7 @@ import AVFoundation
 import AudioToolbox
 import CoreAudio
 import Foundation
+import Accelerate
 
 enum AudioSourceMode: String, CaseIterable {
     case idle = "IDLE"
@@ -37,6 +38,8 @@ final class AudioEngineManager: ObservableObject {
     @Published var isAutoEQRunning = false
     @Published var autoEQProgress: Double = 0
     @Published var namedPresets: [NamedPreset] = []
+    @Published var eqCurveFrame = SpectrumFrame(freqs: [], magsDb: [])
+    @Published var micPermissionDenied = false
 
     // AutoEQ accumulator
     private var accumMags:  [Float] = []
@@ -66,6 +69,8 @@ final class AudioEngineManager: ObservableObject {
         startDisplayUpdates()
         applySourceMode()
         namedPresets = presetStore.loadNamed()
+        requestMicPermission()
+        updateEQCurve()
     }
 
     func openFile(url: URL) {
@@ -109,12 +114,14 @@ final class AudioEngineManager: ObservableObject {
     func resetEQ() {
         eqGains = Array(repeating: 0, count: Self.eqFrequencies.count)
         applyGainsToBands()
+        updateEQCurve()
     }
 
     func updateGain(index: Int, value: Float) {
         guard eqGains.indices.contains(index) else { return }
         eqGains[index] = min(max(value, Self.eqRange.lowerBound), Self.eqRange.upperBound)
         eqNode.bands[index].gain = eqGains[index]
+        updateEQCurve()
     }
 
     // ── Snapshot ─────────────────────────────────────────────
@@ -165,6 +172,7 @@ final class AudioEngineManager: ObservableObject {
         let newGains = computeAutoEQGains(spectrum: avg, freqs: preFrame.freqs)
         eqGains = newGains
         applyGainsToBands()
+        updateEQCurve()
         presetStore.saveLastUsed(EQPreset(gains: eqGains))
         statusText = "AutoEQ applied"
     }
@@ -389,6 +397,73 @@ final class AudioEngineManager: ObservableObject {
             }
         }
     }
+
+    // ── Mic Permission ────────────────────────────────────────
+    private func requestMicPermission() {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            break
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
+                Task { @MainActor in
+                    if !granted {
+                        self?.micPermissionDenied = true
+                        self?.statusText = "Microphone access denied"
+                    }
+                }
+            }
+        default:
+            micPermissionDenied = true
+            statusText = "Microphone access denied — check System Settings"
+        }
+    }
+
+    // ── EQ Curve (biquad frequency response) ─────────────────
+    func updateEQCurve() {
+        let n     = 300
+        let fMin  = Float(60)
+        let fMax  = Float(8000)
+        var freqs = [Float](repeating: 0, count: n)
+        for i in 0..<n {
+            let t = Float(i) / Float(n - 1)
+            freqs[i] = fMin * pow(fMax / fMin, t)   // log-spaced
+        }
+        var totalDb = [Float](repeating: 0, count: n)
+        for (bandIdx, f0) in Self.eqFrequencies.enumerated() {
+            let gain = eqGains[bandIdx]
+            guard abs(gain) > 0.05 else { continue }
+            let (b, a) = peakingCoeffs(f0: f0, gainDb: gain, Q: Self.eqQ, fs: Float(SAMPLE_RATE))
+            for i in 0..<n {
+                let w   = 2 * Float.pi * freqs[i] / Float(SAMPLE_RATE)
+                let ejw = SIMD2<Float>(cos(w), -sin(w))
+                let num = complexAdd(complexAdd(SIMD2<Float>(b[0], 0),
+                                               complexMul(SIMD2<Float>(b[1], 0), ejw)),
+                                     complexMul(SIMD2<Float>(b[2], 0), complexMul(ejw, ejw)))
+                let den = complexAdd(complexAdd(SIMD2<Float>(a[0], 0),
+                                               complexMul(SIMD2<Float>(a[1], 0), ejw)),
+                                     complexMul(SIMD2<Float>(a[2], 0), complexMul(ejw, ejw)))
+                let mag  = sqrt(num.x*num.x + num.y*num.y) / max(sqrt(den.x*den.x + den.y*den.y), 1e-10)
+                totalDb[i] += 20 * log10(max(mag, 1e-10))
+            }
+        }
+        eqCurveFrame = SpectrumFrame(freqs: freqs, magsDb: totalDb)
+    }
+
+    private let SAMPLE_RATE = 44100
+
+    private func peakingCoeffs(f0: Float, gainDb: Float, Q: Float, fs: Float) -> ([Float], [Float]) {
+        let A     = pow(10, gainDb / 40)
+        let w0    = 2 * Float.pi * f0 / fs
+        let alpha = sin(w0) / (2 * Q)
+        let b0 = 1 + alpha * A;  let b1 = -2 * cos(w0);  let b2 = 1 - alpha * A
+        let a0 = 1 + alpha / A;  let a1 = -2 * cos(w0);  let a2 = 1 - alpha / A
+        return ([b0/a0, b1/a0, b2/a0], [1, a1/a0, a2/a0])
+    }
+
+    private func complexMul(_ a: SIMD2<Float>, _ b: SIMD2<Float>) -> SIMD2<Float> {
+        SIMD2<Float>(a.x*b.x - a.y*b.y, a.x*b.y + a.y*b.x)
+    }
+    private func complexAdd(_ a: SIMD2<Float>, _ b: SIMD2<Float>) -> SIMD2<Float> { a + b }
 
     private func loadPresetOnStart() {
         guard let preset = presetStore.loadLastUsed() else { return }

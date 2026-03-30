@@ -16,6 +16,7 @@ struct ContentView: View {
                 pre:      engine.preFrame,
                 post:     engine.postFrame,
                 snapshot: engine.snapshotFrame,
+                eqCurve:  engine.eqCurveFrame,
                 fMin: 60,
                 fMax: 8000,
                 yMin: -110,
@@ -196,6 +197,14 @@ struct ContentView: View {
                       allowsMultipleSelection: false) { result in
             guard case let .success(urls) = result, let url = urls.first else { return }
             engine.openFile(url: url)
+        }
+        .alert("Microphone Access Denied", isPresented: $engine.micPermissionDenied) {
+            Button("Open System Settings") {
+                NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Guitar EQ Analyzer needs microphone access to analyze live sound. Enable it in System Settings → Privacy & Security → Microphone.")
         }
     }
 
