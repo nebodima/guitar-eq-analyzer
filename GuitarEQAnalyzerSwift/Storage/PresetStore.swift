@@ -27,12 +27,17 @@ final class PresetStore {
     // ── Named presets ────────────────────────────────────────
     func loadNamed() -> [NamedPreset] {
         guard let data = try? Data(contentsOf: namedURL) else { return [] }
-        return (try? JSONDecoder().decode([NamedPreset].self, from: data)) ?? []
+        let dec = JSONDecoder()
+        dec.dateDecodingStrategy = .iso8601
+        return (try? dec.decode([NamedPreset].self, from: data)) ?? []
     }
 
     func saveNamed(_ presets: [NamedPreset]) {
         try? ensureDir()
-        let data = try? JSONEncoder().encode(presets)
+        let enc = JSONEncoder()
+        enc.dateEncodingStrategy = .iso8601
+        enc.outputFormatting = .prettyPrinted
+        let data = try? enc.encode(presets)
         try? data?.write(to: namedURL, options: .atomic)
     }
 
