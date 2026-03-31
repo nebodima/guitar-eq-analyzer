@@ -135,6 +135,16 @@ struct ContentView: View {
                 .disabled(engine.isAutoEQRunning || engine.mode == .idle)
                 .help("Play guitar for 4 sec, AutoEQ will flatten the response")
 
+                Picker("Profile", selection: $engine.selectedProfileIndex) {
+                    ForEach(AudioEngineManager.profiles.indices, id: \.self) { i in
+                        let p = AudioEngineManager.profiles[i]
+                        Label(p.name, systemImage: p.icon).tag(i)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 200)
+                .help("AutoEQ profile: Guitar, Vocal or Flat target curve")
+
                 Button { engine.togglePreEQ() } label: {
                     Label("Pre-EQ", systemImage: "waveform")
                 }

@@ -63,16 +63,57 @@ final class AudioEngineManager: ObservableObject {
     private var undoStack: [[Float]] = []
     private let maxUndo = 20
 
-    // ── AutoEQ параметры ─────────────────────────────────────────────
-    // Целевая форма спектра (относительно медианы полос, dB).
-    // Почти плоская — алгоритм сам находит нужные значения через лимиты.
-    private static let autoEQTarget:       [Float] = [-0.9, -0.5, -0.2,  0.0, 0.2,  0.2, -0.1]
-    // Сила коррекции: снижаем агрессию на высоких полосах (там шум > сигнал)
-    private static let autoEQStrength:     [Float] = [0.65, 0.65, 0.65, 0.65, 0.50, 0.40, 0.30]
-    // Гитарный диапазон: лимиты на итоговые значения EQ (главное «знание» о гитаре)
-    // 80Hz всегда резать, 200-400 немного резать, верха — умеренно поднимать
-    private static let autoEQMin:         [Float] = [-12.0, -6.0, -5.0, -3.5,  0.0,  0.0, -1.0]
-    private static let autoEQMax:         [Float] = [ -4.0, -1.0, -0.5, +2.0, +3.5, +2.6, +2.5]
+    // ── AutoEQ профили ───────────────────────────────────────────────
+    // Полосы: 80  200  400  800  1600  3200  6400 Hz
+
+    struct AutoEQProfile {
+        let name:     String
+        let icon:     String
+        // Целевая форма спектра относительно медианы (dB)
+        let target:   [Float]
+        // Коэффициент силы коррекции по полосам (0…1)
+        let strength: [Float]
+        // Гитарный/вокальный диапазон разрешённых значений EQ
+        let min:      [Float]
+        let max:      [Float]
+    }
+
+    static let profiles: [AutoEQProfile] = [
+        // ── Guitar ──────────────────────────────────────────────────────
+        // Срезаем суб-бас, тело оставляем, поднимаем присутствие 1.6-3.2k
+        AutoEQProfile(
+            name: "Guitar",
+            icon: "guitars",
+            target:   [-0.9, -0.5, -0.2,  0.0,  0.2,  0.2, -0.1],
+            strength: [0.65, 0.65, 0.65, 0.65, 0.50, 0.40, 0.30],
+            min:      [-12.0, -6.0, -5.0, -3.5,  0.0,  0.0, -1.0],
+            max:      [ -4.0, -1.0, -0.5, +2.0, +3.5, +2.6, +2.5]
+        ),
+        // ── Vocal ───────────────────────────────────────────────────────
+        // Оставляем тепло 200-400Hz, режем «картон» 300-600Hz аккуратно,
+        // поднимаем разборчивость 2-4k, «воздух» на 6.4k
+        AutoEQProfile(
+            name: "Vocal",
+            icon: "mic.fill",
+            target:   [ 0.0, -0.5, -1.0, -0.5,  0.5,  1.0,  0.5],
+            strength: [0.55, 0.60, 0.65, 0.60, 0.55, 0.50, 0.40],
+            min:      [ -6.0, -5.0, -6.0, -4.0, -1.0,  0.0,  0.0],
+            max:      [ +1.0,  0.0, +0.5, +1.0, +4.0, +5.0, +4.0]
+        ),
+        // ── Flat ────────────────────────────────────────────────────────
+        // Стремимся к ровному спектру без музыкальных предпочтений
+        AutoEQProfile(
+            name: "Flat",
+            icon: "minus",
+            target:   [0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0],
+            strength: [0.60, 0.60, 0.60, 0.60, 0.55, 0.45, 0.35],
+            min:      [-10.0, -8.0, -8.0, -6.0, -6.0, -6.0, -6.0],
+            max:      [ +6.0, +6.0, +6.0, +6.0, +6.0, +6.0, +6.0]
+        ),
+    ]
+
+    @Published var selectedProfileIndex: Int = 0   // Guitar по умолчанию
+    var selectedProfile: AutoEQProfile { Self.profiles[selectedProfileIndex] }
 
     private let engine = AVAudioEngine()
     private let playerNode = AVAudioPlayerNode()
@@ -166,6 +207,12 @@ final class AudioEngineManager: ObservableObject {
 
     func togglePreEQ() { showPreEQ.toggle() }
     func togglePeakSource() { peakOnPost.toggle() }
+
+    func selectProfile(_ index: Int) {
+        guard Self.profiles.indices.contains(index) else { return }
+        selectedProfileIndex = index
+        statusText = "AutoEQ profile: \(Self.profiles[index].name)"
+    }
 
     func toggleMonitor() {
         monitorEnabled.toggle()
@@ -305,14 +352,16 @@ final class AudioEngineManager: ObservableObject {
         let median   = sorted[sorted.count / 2]
         let relLevels = bandLevels.map { $0 - median }
 
-        // 3. Ошибка: насколько текущая форма отличается от целевой
-        //    error > 0  → нужно поднять  |  error < 0 → нужно срезать
-        let errors = zip(relLevels, Self.autoEQTarget).map { rel, target in target - rel }
+        // 3. Параметры из выбранного профиля
+        let profile = selectedProfile
 
-        // 4. Вычисляем gains: error * strength, затем clip по гитарным лимитам.
-        //    Сила снижена на верхних полосах — высокие частоты нестабильнее по уровню.
-        return zip(zip(errors, Self.autoEQStrength),
-                   zip(Self.autoEQMin, Self.autoEQMax))
+        // 4. Ошибка: насколько текущая форма отличается от целевой
+        //    error > 0  → нужно поднять  |  error < 0 → нужно срезать
+        let errors = zip(relLevels, profile.target).map { rel, target in target - rel }
+
+        // 5. Вычисляем gains: error * strength, затем clip по лимитам профиля.
+        return zip(zip(errors, profile.strength),
+                   zip(profile.min, profile.max))
             .map { args -> Float in
                 let ((err, strength), (minG, maxG)) = args
                 return min(max(err * strength, minG), maxG)
