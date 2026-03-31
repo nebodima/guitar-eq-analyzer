@@ -145,7 +145,7 @@ struct ContentView: View {
 
                 // Показать папку с записями в Finder
                 Button { engine.showRecordingsInFinder() } label: {
-                    Image(systemName: "folder.badge.waveform")
+                    Label("Recordings", systemImage: "recordingtape")
                 }
                 .buttonStyle(.bordered)
                 .help("Show GuitarEQ Recordings folder in Finder")
