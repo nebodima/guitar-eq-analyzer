@@ -32,7 +32,7 @@ struct GuitarEQAnalyzerApp: App {
     var body: some Scene {
         WindowGroup("Guitar EQ Analyzer") {
             ContentView(engine: engine)
-                .frame(minWidth: 1160, minHeight: 760)
+                .frame(minWidth: 900, minHeight: 720)
         }
     }
 }

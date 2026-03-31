@@ -22,7 +22,6 @@ final class AudioEngineManager: ObservableObject {
     static let defaultGains: [Float] = [0, 0, 0, 0, 0, 0, 0]
     static let eqQ: Float = 0.75   // октавы (AVAudioUnitEQ bandwidth); 0.75 oct ≈ Q 1.33
     static let eqRange: ClosedRange<Float> = -12...12
-    static let outputGain: Float = powf(10, -9.0 / 20.0)
 
     @Published var mode: AudioSourceMode = .idle
     @Published var eqEnabled = true
@@ -48,16 +47,13 @@ final class AudioEngineManager: ObservableObject {
     @Published var isRecording      = false
     @Published var lastRecordingURL: URL? = nil
     @Published var recordingSeconds: Int  = 0
-
-    // Сглаженный диапазон отображения (плавная адаптация, не скачет)
-    @Published var displayRangeLo: Float = -110
-    @Published var displayRangeHi: Float = -40
+    @Published var inputLevelDb: Float    = -80   // текущий RMS уровень входа (dB)
 
     // AutoEQ accumulator
     private var accumMags:  [Float] = []
     private var accumCount: Int     = 0
     private var autoEQTimer: DispatchSourceTimer?
-    private let autoEQDuration: Double = 4.0
+    @Published var autoEQDuration: Double = 4.0   // сек: 4 / 8 / 16
 
     // Автосохранение — сохраняем через 1 сек после последнего движения слайдера
     private var autoSaveTimer: DispatchSourceTimer?
@@ -147,7 +143,6 @@ final class AudioEngineManager: ObservableObject {
         namedPresets = presetStore.loadNamed()
         requestMicPermission()
         updateEQCurve()
-        AppLog.write("Init complete. inputDevices=\(inputDevices.count) outputDevices=\(outputDevices.count)")
 
         // Реакция на внешнее изменение конфигурации (смена устройства в macOS, подключение/отключение)
         NotificationCenter.default.addObserver(
@@ -308,7 +303,6 @@ final class AudioEngineManager: ObservableObject {
         monitorEnabled.toggle()
         let vol: Float = (mode == .mic && monitorEnabled) ? 1.0 : (mode == .file ? 1.0 : 0.0)
         engine.mainMixerNode.outputVolume = vol
-        AppLog.write("toggleMonitor: monitorEnabled=\(monitorEnabled) mode=\(mode) → mainMixerVol=\(vol) engineRunning=\(engine.isRunning) micMixerVol=\(micMixer.outputVolume)")
     }
 
     func toggleEQ() {
@@ -360,6 +354,14 @@ final class AudioEngineManager: ObservableObject {
     }
 
     // ── Snapshot ─────────────────────────────────────────────
+    func showRecordingsInFinder() {
+        let dir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Documents/GuitarEQ Recordings")
+        // Создаём папку если не существует, потом открываем
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(dir)
+    }
+
     func takeSnapshot() {
         snapshotFrame = preFrame
         statusText    = "Snapshot taken"
@@ -562,7 +564,6 @@ final class AudioEngineManager: ObservableObject {
         await Task.yield()
 
         let wasRunning = engine.isRunning
-        AppLog.write("changeDevice: wasRunning=\(wasRunning) newInput=\(String(describing: newInput)) newOutput=\(String(describing: newOutput))")
         if wasRunning { engine.stop() }
 
         var inputOK  = true
@@ -592,7 +593,6 @@ final class AudioEngineManager: ObservableObject {
             if newInput != nil {
                 if let sysOut = Self.defaultOutputDevice() {
                     let ok = setOutputDevice(sysOut)
-                    AppLog.write("Output AU → sysDefault \(sysOut): \(ok ? "OK" : "FAIL")")
                 }
             }
 
@@ -705,11 +705,17 @@ final class AudioEngineManager: ObservableObject {
 
     private func installTaps() {
         removeTaps()
-        // Только один tap — на sourceMixer (до EQ).
-        // Post-EQ спектр вычисляется математически через eqCurveFrame,
-        // что устраняет timing-mismatch, IIR-артефакты и дрейф сглаживания.
         sourceMixer.installTap(onBus: 0, bufferSize: 1024, format: sourceMixer.outputFormat(forBus: 0)) { [weak self] buffer, _ in
-            self?.analyzer?.appendPre(buffer)
+            guard let self else { return }
+            self.analyzer?.appendPre(buffer)
+            // RMS для VU-метра
+            if let ch = buffer.floatChannelData?.pointee {
+                let n = vDSP_Length(buffer.frameLength)
+                var rms: Float = 0
+                vDSP_rmsqv(ch, 1, &rms, n)
+                let db = rms > 1e-9 ? 20 * log10f(rms) : -80
+                DispatchQueue.main.async { self.inputLevelDb = db }
+            }
         }
     }
 
@@ -767,7 +773,6 @@ final class AudioEngineManager: ObservableObject {
     }
 
     private func applySourceMode() {
-        AppLog.write("applySourceMode: \(mode)")
         switch mode {
         case .idle:
             micMixer.outputVolume = 0
@@ -785,7 +790,6 @@ final class AudioEngineManager: ObservableObject {
             engine.mainMixerNode.outputVolume = monitorEnabled ? 1.0 : 0.0
             playerNode.pause()
             statusText = "MIC ON (\(deviceName(for: selectedInputID, in: inputDevices)))"
-            AppLog.write("applySourceMode MIC: monitor=\(monitorEnabled) mainMixerVol=\(engine.mainMixerNode.outputVolume) micMixerVol=\(micMixer.outputVolume) engineRunning=\(engine.isRunning)")
             logActualDevices()
         case .file:
             startEngineIfNeeded()
@@ -799,7 +803,6 @@ final class AudioEngineManager: ObservableObject {
     private func startFilePlayback(resetPosition: Bool) {
         guard let file = currentFile else {
             statusText = "No file loaded"
-            AppLog.write("startFilePlayback: no file loaded")
             return
         }
         playerNode.stop()
@@ -807,7 +810,6 @@ final class AudioEngineManager: ObservableObject {
         scheduleFileLoop(file)
         playerNode.play()
         statusText = "FILE PLAY: \(loadedFileName)"
-        AppLog.write("startFilePlayback: playing \(loadedFileName)")
     }
 
     private func scheduleFileLoop(_ file: AVAudioFile) {
@@ -970,7 +972,6 @@ final class AudioEngineManager: ObservableObject {
             &mutableID,
             size
         )
-        AppLog.write("setInputDevice \(deviceID) osStatus=\(status)")
         return status == noErr
     }
 
@@ -988,7 +989,6 @@ final class AudioEngineManager: ObservableObject {
         let inID  = readDevice(from: engine.inputNode.audioUnit)
         let outID = readDevice(from: engine.outputNode.audioUnit)
         let outFmt = engine.outputNode.outputFormat(forBus: 0)
-        AppLog.write("AUHAL: input=\(inID)(\(Self.deviceName(for: inID))) output=\(outID)(\(Self.deviceName(for: outID))) outFmt=\(Int(outFmt.sampleRate))Hz/\(outFmt.channelCount)ch")
     }
 
     @discardableResult
@@ -1004,7 +1004,6 @@ final class AudioEngineManager: ObservableObject {
             &mutableID,
             size
         )
-        AppLog.write("setOutputDevice(AU) \(deviceID) osStatus=\(status)")
         return status == noErr
     }
 

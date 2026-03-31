@@ -52,6 +52,14 @@ struct ContentView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(engine.mode == .mic ? .green : .gray.opacity(0.4))
+                .keyboardShortcut("m", modifiers: .command)
+
+                // VU-метр — виден только в MIC/Record режиме
+                if engine.mode == .mic || engine.isRecording {
+                    VUMeterView(levelDb: engine.inputLevelDb)
+                        .frame(width: 80, height: 20)
+                        .transition(.opacity)
+                }
 
                 // Monitor и Record — только в режиме MIC
                 if engine.mode == .mic {
@@ -85,6 +93,7 @@ struct ContentView: View {
                     .help(engine.isRecording
                           ? "Stop recording — file will be loaded automatically"
                           : "Record mic input to WAV (pre-EQ, dry signal)")
+                    .keyboardShortcut("r", modifiers: .command)
                     .transition(.opacity.combined(with: .move(edge: .leading)))
                 }
 
@@ -105,6 +114,7 @@ struct ContentView: View {
                 .buttonStyle(.borderedProminent)
                 .tint(engine.mode == .file ? .orange : .blue)
                 .disabled(engine.loadedFileName.isEmpty && engine.mode != .file)
+                .keyboardShortcut(.space, modifiers: [])
 
                 if !engine.loadedFileName.isEmpty {
                     Label(engine.loadedFileName, systemImage: "music.note")
@@ -117,7 +127,7 @@ struct ContentView: View {
 
                 Spacer()
 
-                // Snapshot — иконки справа (не занимают место в основном ряду)
+                // Snapshot
                 Button { engine.takeSnapshot() } label: {
                     Image(systemName: "camera")
                 }
@@ -132,6 +142,13 @@ struct ContentView: View {
                     .help("Clear snapshot")
                     .transition(.opacity)
                 }
+
+                // Показать папку с записями в Finder
+                Button { engine.showRecordingsInFinder() } label: {
+                    Image(systemName: "folder.badge.waveform")
+                }
+                .buttonStyle(.bordered)
+                .help("Show GuitarEQ Recordings folder in Finder")
             }
 
             // ── Строка 2: EQ ─────────────────────────────────────────
@@ -155,6 +172,7 @@ struct ContentView: View {
                 .tint(.purple)
                 .disabled(engine.isAutoEQRunning || engine.mode == .idle)
                 .help("Play guitar/vocal for 4 sec, then AutoEQ adjusts bands")
+                .keyboardShortcut(.return, modifiers: .command)
 
                 Picker(selection: $engine.selectedProfileIndex, label: EmptyView()) {
                     ForEach(AudioEngineManager.profiles.indices, id: \.self) { i in
@@ -165,6 +183,16 @@ struct ContentView: View {
                 .labelsHidden()
                 .frame(width: 145)
                 .help("AutoEQ profile: Guitar, Vocal or Flat target curve")
+
+                Picker(selection: $engine.autoEQDuration, label: EmptyView()) {
+                    Text("4s").tag(4.0)
+                    Text("8s").tag(8.0)
+                    Text("16s").tag(16.0)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 80)
+                .help("AutoEQ analysis duration")
 
                 Divider().frame(height: 22)
 
@@ -569,5 +597,45 @@ struct VerticalSlider: View {
         }
         .frame(width: 30, height: height)
         .frame(maxWidth: .infinity)
+    }
+}
+
+// ── VU-метр ───────────────────────────────────────────────────────────
+struct VUMeterView: View {
+    let levelDb: Float
+    // Диапазон отображения: -60 dB (тишина) … 0 dB (максимум)
+    private let minDb: Float = -60
+    private let maxDb: Float =  0
+
+    var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width
+            let h = geo.size.height
+            let frac = CGFloat(max(0, min(1, (levelDb - minDb) / (maxDb - minDb))))
+
+            ZStack(alignment: .leading) {
+                // Фон
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(.gray.opacity(0.2))
+
+                // Заливка — зелёная до -6dB, жёлтая до -3dB, красная выше
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(barColor)
+                    .frame(width: w * frac)
+
+                // Отметка -6 dB (безопасный уровень)
+                let safeX = w * CGFloat((-6 - minDb) / (maxDb - minDb))
+                Rectangle()
+                    .fill(.white.opacity(0.4))
+                    .frame(width: 1, height: h)
+                    .offset(x: safeX)
+            }
+        }
+    }
+
+    private var barColor: Color {
+        if levelDb > -3  { return .red }
+        if levelDb > -6  { return .yellow }
+        return .green
     }
 }
