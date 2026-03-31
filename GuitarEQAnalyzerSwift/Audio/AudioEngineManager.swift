@@ -62,9 +62,16 @@ final class AudioEngineManager: ObservableObject {
     private var undoStack: [[Float]] = []
     private let maxUndo = 20
 
-    // Гитарная целевая кривая AutoEQ (отклонение от медианы, dB)
-    // 80  200  400  800  1600  3200  6400 Hz
-    static let guitarTargetOffset: [Float] = [-1.5, -2.0, -1.0, 0.0, +1.5, +2.0, +1.0]
+    // ── AutoEQ параметры ─────────────────────────────────────────────
+    // Целевая форма спектра (относительно медианы полос, dB).
+    // Почти плоская — алгоритм сам находит нужные значения через лимиты.
+    private static let autoEQTarget:       [Float] = [-0.9, -0.5, -0.2,  0.0, 0.2,  0.2, -0.1]
+    // Сила коррекции: снижаем агрессию на высоких полосах (там шум > сигнал)
+    private static let autoEQStrength:     [Float] = [0.65, 0.65, 0.65, 0.65, 0.50, 0.40, 0.30]
+    // Гитарный диапазон: лимиты на итоговые значения EQ (главное «знание» о гитаре)
+    // 80Hz всегда резать, 200-400 немного резать, верха — умеренно поднимать
+    private static let autoEQMin:         [Float] = [-12.0, -6.0, -5.0, -3.5,  0.0,  0.0, -1.0]
+    private static let autoEQMax:         [Float] = [ -4.0, -1.0, -0.5, +2.0, +3.5, +2.6, +2.5]
 
     private let engine = AVAudioEngine()
     private let playerNode = AVAudioPlayerNode()
@@ -271,22 +278,43 @@ final class AudioEngineManager: ObservableObject {
 
     private func computeAutoEQGains(spectrum: [Float], freqs: [Float]) -> [Float] {
         guard !freqs.isEmpty else { return eqGains }
+
+        // 1. Измеряем уровень каждой полосы — среднее в окне 1/3 октавы
+        let halfBand = Float(pow(2.0, 1.0 / 6.0))   // ≈ 1.122
         var bandLevels: [Float] = []
         for bandFreq in Self.eqFrequencies {
-            let nearest = freqs.enumerated().min(by: { abs($0.element - bandFreq) < abs($1.element - bandFreq) })?.offset ?? 0
-            let lo  = max(0, nearest - 3)
-            let hi  = min(spectrum.count - 1, nearest + 3)
-            let avg = spectrum[lo...hi].reduce(0, +) / Float(hi - lo + 1)
-            bandLevels.append(avg)
+            let fLo = bandFreq / halfBand
+            let fHi = bandFreq * halfBand
+            let inBand = zip(freqs, spectrum)
+                .filter { $0.0 >= fLo && $0.0 <= fHi }
+                .map { $0.1 }
+            if !inBand.isEmpty {
+                bandLevels.append(inBand.reduce(0, +) / Float(inBand.count))
+            } else {
+                // резервный вариант: ближайший бин
+                let i = freqs.enumerated()
+                    .min { abs($0.element - bandFreq) < abs($1.element - bandFreq) }?.offset ?? 0
+                bandLevels.append(spectrum[i])
+            }
         }
-        // Референс — медиана
-        let sorted    = bandLevels.sorted()
-        let reference = sorted[sorted.count / 2]
-        // Коррекция = (reference - measured) + guitarTargetOffset
-        return zip(bandLevels, Self.guitarTargetOffset).map { level, targetOffset in
-            let correction = (reference - level) + targetOffset
-            return min(max(correction, Self.eqRange.lowerBound), Self.eqRange.upperBound)
-        }
+
+        // 2. Относительные уровни (каждая полоса − медиана полос)
+        let sorted   = bandLevels.sorted()
+        let median   = sorted[sorted.count / 2]
+        let relLevels = bandLevels.map { $0 - median }
+
+        // 3. Ошибка: насколько текущая форма отличается от целевой
+        //    error > 0  → нужно поднять  |  error < 0 → нужно срезать
+        let errors = zip(relLevels, Self.autoEQTarget).map { rel, target in target - rel }
+
+        // 4. Вычисляем gains: error * strength, затем clip по гитарным лимитам.
+        //    Сила снижена на верхних полосах — высокие частоты нестабильнее по уровню.
+        return zip(zip(errors, Self.autoEQStrength),
+                   zip(Self.autoEQMin, Self.autoEQMax))
+            .map { args -> Float in
+                let ((err, strength), (minG, maxG)) = args
+                return min(max(err * strength, minG), maxG)
+            }
     }
 
     // ── Named Presets ─────────────────────────────────────────
