@@ -43,6 +43,7 @@ final class AudioEngineManager: ObservableObject {
     @Published var micPermissionDenied = false
     @Published var canUndo = false
     @Published var showPreEQ = true
+    @Published var monitorEnabled = false   // OFF по умолчанию — иначе фидбек с динамиками
 
     // Сглаженный диапазон отображения (плавная адаптация, не скачет)
     @Published var displayRangeLo: Float = -110
@@ -83,7 +84,8 @@ final class AudioEngineManager: ObservableObject {
         AppLog.write("=== Guitar EQ Analyzer started ===")
         configureEQ()
         configureGraph()
-        loadPresetOnStart()
+        // Не загружаем последний пресет — всегда стартуем с шаблонными значениями defaultGains.
+        // Для сохранения настроек между сессиями использовать именованные пресеты.
         refreshDevices()
         startEngineIfNeeded()
         startDisplayUpdates()
@@ -92,6 +94,33 @@ final class AudioEngineManager: ObservableObject {
         requestMicPermission()
         updateEQCurve()
         AppLog.write("Init complete. inputDevices=\(inputDevices.count) outputDevices=\(outputDevices.count)")
+
+        // Реакция на внешнее изменение конфигурации (смена устройства в macOS, подключение/отключение)
+        NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: engine,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                guard !self.isRestartingGraph else { return }
+                AppLog.write("AVAudioEngineConfigurationChange — rebuilding graph")
+                self.isRestartingGraph = true
+                defer { self.isRestartingGraph = false }
+                self.reconnectInputGraph()
+                self.engine.prepare()
+                do {
+                    try self.engine.start()
+                    self.logActualDevices()
+                    self.applySourceMode()
+                    self.refreshDevices()
+                    AppLog.write("Engine recovered after config change")
+                } catch {
+                    self.statusText = "Engine config error: \(error.localizedDescription)"
+                    AppLog.write("Engine recovery FAILED: \(error)")
+                }
+            }
+        }
     }
 
     func openFile(url: URL) {
@@ -128,6 +157,13 @@ final class AudioEngineManager: ObservableObject {
     }
 
     func togglePreEQ() { showPreEQ.toggle() }
+
+    func toggleMonitor() {
+        monitorEnabled.toggle()
+        let vol: Float = (mode == .mic && monitorEnabled) ? 1.0 : (mode == .file ? 1.0 : 0.0)
+        engine.mainMixerNode.outputVolume = vol
+        AppLog.write("toggleMonitor: monitorEnabled=\(monitorEnabled) mode=\(mode) → mainMixerVol=\(vol) engineRunning=\(engine.isRunning) micMixerVol=\(micMixer.outputVolume)")
+    }
 
     func toggleEQ() {
         eqEnabled.toggle()
@@ -315,20 +351,23 @@ final class AudioEngineManager: ObservableObject {
     func selectInputDevice(_ deviceID: AudioDeviceID?) {
         guard selectedInputID != deviceID else { return }
         selectedInputID = deviceID
-        changeDevice(newInput: deviceID, newOutput: nil)
+        Task { await changeDevice(newInput: deviceID, newOutput: nil) }
     }
 
     func selectOutputDevice(_ deviceID: AudioDeviceID?) {
-        guard selectedOutputID != deviceID else { return }
+        // Output switching через CoreAudio property ненадёжно с AVAudioEngine → не меняем
         selectedOutputID = deviceID
-        changeDevice(newInput: nil, newOutput: deviceID)
     }
 
     /// Полная смена устройства: stop → set → reconnect graph если input → start
-    private func changeDevice(newInput: AudioDeviceID?, newOutput: AudioDeviceID?) {
+    /// Async чтобы engine.stop() не блокировал main thread (UI не зависает)
+    private func changeDevice(newInput: AudioDeviceID?, newOutput: AudioDeviceID?) async {
         guard !isRestartingGraph else { return }
         isRestartingGraph = true
-        defer { isRestartingGraph = false }
+
+        statusText = "Switching device..."
+        // Отдаём управление RunLoop-у чтобы UI успел отрисовать статус до блокирующего stop()
+        await Task.yield()
 
         let wasRunning = engine.isRunning
         AppLog.write("changeDevice: wasRunning=\(wasRunning) newInput=\(String(describing: newInput)) newOutput=\(String(describing: newOutput))")
@@ -337,28 +376,70 @@ final class AudioEngineManager: ObservableObject {
         var inputOK  = true
         var outputOK = true
 
-        if let id = newInput  { inputOK  = setInputDevice(id);  AppLog.write("setInputDevice(\(id)) → \(inputOK)") }
-        if let id = newOutput { outputOK = setOutputDevice(id); AppLog.write("setOutputDevice(\(id)) → \(outputOK)") }
+        // Перестраиваем граф — формат inputNode зависит от устройства, поэтому
+        // сначала устанавливаем входное устройство (чтобы hwFormat в reconnectInputGraph был верным)
+        if let id = newInput  { inputOK  = setInputDevice(id) }
 
-        // При смене input — формат мог измениться, перестраиваем граф
-        if newInput != nil { reconnectInputGraph() }
+        if !inputOK && newInput != nil {
+            statusText = "Input device not available"
+            isRestartingGraph = false; return
+        }
+
+        // Перестраиваем граф (hwFormat берётся уже от нового input device)
+        reconnectInputGraph()
 
         if wasRunning || mode != .idle {
+            // prepare() инициализирует AUHAL-ы. Устройства выставляются ПОСЛЕ prepare()
+            // чтобы назначение не было перезаписано внутренней инициализацией.
+            engine.prepare()
+
+            // Выставляем output ПОСЛЕ prepare(), чтобы пережить AudioUnitInitialize
+            if let id = newOutput { outputOK = setOutputDevice(id) }
+            // Явно восстанавливаем output на системный дефолт после смены input:
+            // на некоторых macOS setInputDevice меняет shared AUHAL и перенаправляет выход.
+            if newInput != nil {
+                if let sysOut = Self.defaultOutputDevice() {
+                    let ok = setOutputDevice(sysOut)
+                    AppLog.write("Output AU → sysDefault \(sysOut): \(ok ? "OK" : "FAIL")")
+                }
+            }
+
             do {
                 try engine.start()
-                AppLog.write("Engine restarted after device change")
-            }
-            catch {
+                logActualDevices()
+            } catch let err as NSError where err.code == -10875 {
+                AppLog.write("Engine start -10875, retry in 250ms...")
+                try? await Task.sleep(nanoseconds: 250_000_000)
+                engine.prepare()
+                if let id = newInput  { _ = setInputDevice(id) }
+                if newInput != nil, let sysOut = Self.defaultOutputDevice() { _ = setOutputDevice(sysOut) }
+                do {
+                    try engine.start()
+                    logActualDevices()
+                    AppLog.write("Engine restarted (retry OK)")
+                } catch {
+                    statusText = "Engine start failed: \(error.localizedDescription)"
+                    AppLog.write("Engine restart FAILED after retry: \(error)")
+                    isRestartingGraph = false
+                    return
+                }
+            } catch {
                 statusText = "Engine start failed: \(error.localizedDescription)"
                 AppLog.write("Engine restart FAILED: \(error)")
+                isRestartingGraph = false
                 return
             }
         }
 
+        // Пауза после смены output — устройству нужно время стабилизироваться
+        if newOutput != nil {
+            try? await Task.sleep(nanoseconds: 100_000_000) // 100 ms
+        }
+
+        isRestartingGraph = false
         applySourceMode()
 
-        if !inputOK  { statusText = "Input device not available" }
-        else if !outputOK { statusText = "Output device not available" }
+        if !outputOK { statusText = "Output device not available" }
         else if newInput  != nil { statusText = "Input: \(deviceName(for: newInput,  in: inputDevices))" }
         else if newOutput != nil { statusText = "Output: \(deviceName(for: newOutput, in: outputDevices))" }
     }
@@ -381,7 +462,7 @@ final class AudioEngineManager: ObservableObject {
         engine.connect(micMixer,         to: sourceMixer, format: hwFormat)
         engine.connect(fileMixer,        to: sourceMixer, format: nil)
         engine.connect(sourceMixer,      to: eqNode,      format: hwFormat)
-        engine.connect(eqNode,           to: engine.mainMixerNode, format: hwFormat)
+        engine.connect(eqNode,           to: engine.mainMixerNode, format: nil)
 
         sourceMixer.outputVolume = 1.0
         installTaps()
@@ -430,23 +511,24 @@ final class AudioEngineManager: ObservableObject {
 
     private func installTaps() {
         removeTaps()
+        // Только один tap — на sourceMixer (до EQ).
+        // Post-EQ спектр вычисляется математически через eqCurveFrame,
+        // что устраняет timing-mismatch, IIR-артефакты и дрейф сглаживания.
         sourceMixer.installTap(onBus: 0, bufferSize: 1024, format: sourceMixer.outputFormat(forBus: 0)) { [weak self] buffer, _ in
             self?.analyzer?.appendPre(buffer)
-        }
-        eqNode.installTap(onBus: 0, bufferSize: 1024, format: eqNode.outputFormat(forBus: 0)) { [weak self] buffer, _ in
-            self?.analyzer?.appendPost(buffer)
         }
     }
 
     private func removeTaps() {
         sourceMixer.removeTap(onBus: 0)
-        eqNode.removeTap(onBus: 0)
     }
 
     private func startEngineIfNeeded() {
         guard !engine.isRunning else { return }
+        engine.prepare()   // обязателен перед start() при запуске/перезапуске
         do {
             try engine.start()
+            logActualDevices()
             statusText = "Engine running"
             AppLog.write("Engine started OK")
         } catch {
@@ -461,19 +543,26 @@ final class AudioEngineManager: ObservableObject {
         timer.setEventHandler { [weak self] in
             guard let self, let analyzer = self.analyzer else { return }
             guard self.mode != .idle else { return }
-            let frames = analyzer.makeFrames()
+            let preSpectrum = analyzer.makeFrame()
             Task { @MainActor in
-                self.preFrame  = frames.pre
-                self.postFrame = frames.post
+                self.preFrame = preSpectrum
 
-                // Диапазон фиксированный — адаптация убрана (она двигала всю шкалу)
+                // Post-EQ: вычисляем математически (pre + EQ-кривая).
+                // Гарантирует: при gains=0 → post ≡ pre (кривые совпадают точно).
+                // Нет timing-mismatch, нет IIR-артефактов, нет дрейфа сглаживания.
+                if !self.eqEnabled || self.eqCurveFrame.freqs.isEmpty {
+                    self.postFrame = preSpectrum
+                } else {
+                    let postMags = self.applyEQCurveToSpectrum(preSpectrum)
+                    self.postFrame = SpectrumFrame(freqs: preSpectrum.freqs, magsDb: postMags)
+                }
 
                 // Накапливаем для AutoEQ
-                if self.isAutoEQRunning, !frames.pre.magsDb.isEmpty {
+                if self.isAutoEQRunning, !preSpectrum.magsDb.isEmpty {
                     if self.accumMags.isEmpty {
-                        self.accumMags = frames.pre.magsDb
-                    } else if self.accumMags.count == frames.pre.magsDb.count {
-                        for i in self.accumMags.indices { self.accumMags[i] += frames.pre.magsDb[i] }
+                        self.accumMags = preSpectrum.magsDb
+                    } else if self.accumMags.count == preSpectrum.magsDb.count {
+                        for i in self.accumMags.indices { self.accumMags[i] += preSpectrum.magsDb[i] }
                     }
                     self.accumCount += 1
                 }
@@ -489,19 +578,26 @@ final class AudioEngineManager: ObservableObject {
         case .idle:
             micMixer.outputVolume = 0
             fileMixer.outputVolume = 0
+            engine.mainMixerNode.outputVolume = 0
             playerNode.pause()
-            if engine.isRunning { engine.pause() }
+            // Не вызываем engine.pause() — start() после pause() без prepare() ненадёжен
+            // на macOS при ручном назначении AUHAL устройств.
+            // Движок остаётся запущенным, выход заглушён через outputVolume=0.
             statusText = "Ready"
         case .mic:
             startEngineIfNeeded()
             micMixer.outputVolume = 1
             fileMixer.outputVolume = 0
+            engine.mainMixerNode.outputVolume = monitorEnabled ? 1.0 : 0.0
             playerNode.pause()
             statusText = "MIC ON (\(deviceName(for: selectedInputID, in: inputDevices)))"
+            AppLog.write("applySourceMode MIC: monitor=\(monitorEnabled) mainMixerVol=\(engine.mainMixerNode.outputVolume) micMixerVol=\(micMixer.outputVolume) engineRunning=\(engine.isRunning)")
+            logActualDevices()
         case .file:
             startEngineIfNeeded()
             micMixer.outputVolume = 0
             fileMixer.outputVolume = 1
+            engine.mainMixerNode.outputVolume = 1.0
             startFilePlayback(resetPosition: false)
         }
     }
@@ -512,7 +608,8 @@ final class AudioEngineManager: ObservableObject {
             AppLog.write("startFilePlayback: no file loaded")
             return
         }
-        playerNode.stop()          // всегда сбрасываем для надёжности
+        playerNode.stop()
+        file.framePosition = 0   // сброс позиции — иначе после смены устройства файл играет с середины или не играет
         scheduleFileLoop(file)
         playerNode.play()
         statusText = "FILE PLAY: \(loadedFileName)"
@@ -609,6 +706,30 @@ final class AudioEngineManager: ObservableObject {
         return ([b0/a0, b1/a0, b2/a0], [1, a1/a0, a2/a0])
     }
 
+    /// Добавляет значения EQ-кривой к спектру pre-EQ методом линейной интерполяции.
+    /// При всех gains=0 eqCurveFrame.magsDb ≡ 0, поэтому result = pre (точно).
+    private func applyEQCurveToSpectrum(_ pre: SpectrumFrame) -> [Float] {
+        let cf = eqCurveFrame
+        guard !cf.freqs.isEmpty, !pre.freqs.isEmpty else { return pre.magsDb }
+        return pre.freqs.enumerated().map { idx, freq in
+            pre.magsDb[idx] + interpolateEQCurve(cf, at: freq)
+        }
+    }
+
+    /// Линейная интерполяция по log-spaced eqCurveFrame.
+    private func interpolateEQCurve(_ cf: SpectrumFrame, at freq: Float) -> Float {
+        let n = cf.freqs.count
+        if freq <= cf.freqs[0]     { return cf.magsDb[0] }
+        if freq >= cf.freqs[n - 1] { return cf.magsDb[n - 1] }
+        var lo = 0, hi = n - 1
+        while hi - lo > 1 {
+            let mid = (lo + hi) / 2
+            if cf.freqs[mid] <= freq { lo = mid } else { hi = mid }
+        }
+        let t = (freq - cf.freqs[lo]) / (cf.freqs[hi] - cf.freqs[lo])
+        return cf.magsDb[lo] + t * (cf.magsDb[hi] - cf.magsDb[lo])
+    }
+
     private func complexMul(_ a: SIMD2<Float>, _ b: SIMD2<Float>) -> SIMD2<Float> {
         SIMD2<Float>(a.x*b.x - a.y*b.y, a.x*b.y + a.y*b.x)
     }
@@ -642,12 +763,30 @@ final class AudioEngineManager: ObservableObject {
             &mutableID,
             size
         )
+        AppLog.write("setInputDevice \(deviceID) osStatus=\(status)")
         return status == noErr
     }
 
+    /// Читает реально установленные устройства из AUHAL и пишет в лог.
+    /// Позволяет сразу видеть, куда идёт звук — в наушники или в Ampero.
+    private func logActualDevices() {
+        func readDevice(from au: AudioUnit?) -> AudioDeviceID {
+            guard let au else { return 0 }
+            var id: AudioDeviceID = 0
+            var sz = UInt32(MemoryLayout<AudioDeviceID>.size)
+            AudioUnitGetProperty(au, kAudioOutputUnitProperty_CurrentDevice,
+                                 kAudioUnitScope_Global, 0, &id, &sz)
+            return id
+        }
+        let inID  = readDevice(from: engine.inputNode.audioUnit)
+        let outID = readDevice(from: engine.outputNode.audioUnit)
+        let outFmt = engine.outputNode.outputFormat(forBus: 0)
+        AppLog.write("AUHAL: input=\(inID)(\(Self.deviceName(for: inID))) output=\(outID)(\(Self.deviceName(for: outID))) outFmt=\(Int(outFmt.sampleRate))Hz/\(outFmt.channelCount)ch")
+    }
+
+    @discardableResult
     private func setOutputDevice(_ deviceID: AudioDeviceID?) -> Bool {
-        guard let deviceID else { return false }
-        guard let outputAU = engine.outputNode.audioUnit else { return false }
+        guard let deviceID, let outputAU = engine.outputNode.audioUnit else { return false }
         var mutableID = deviceID
         let size = UInt32(MemoryLayout<AudioDeviceID>.size)
         let status = AudioUnitSetProperty(
@@ -658,6 +797,7 @@ final class AudioEngineManager: ObservableObject {
             &mutableID,
             size
         )
+        AppLog.write("setOutputDevice(AU) \(deviceID) osStatus=\(status)")
         return status == noErr
     }
 
