@@ -24,7 +24,8 @@ struct ContentView: View {
                 yMax: -10,
                 peakSource: engine.peakOnPost ? .post : .pre
             )
-            .frame(height: 380)
+            .frame(minHeight: 260)
+            .frame(maxHeight: .infinity)
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay(alignment: .topTrailing) {
                 // Бейдж режима — только когда активен
@@ -346,8 +347,6 @@ struct ContentView: View {
                 Spacer()
             }
             .padding(.horizontal, 4)
-
-            Spacer(minLength: 0)
         }
         .padding(12)
         .fileImporter(isPresented: $showFileImporter, allowedContentTypes: [.audio],
