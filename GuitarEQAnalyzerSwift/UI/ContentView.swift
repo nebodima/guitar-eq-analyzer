@@ -10,9 +10,195 @@ struct ContentView: View {
     @State private var showPresetsPanel  = false
 
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 0) {
 
-            // ── Спектр ───────────────────────────────────────────────
+            // ══════════════════════════════════════════════════════════
+            // ── Тулбар (2 строки) ─────────────────────────────────────
+            // ══════════════════════════════════════════════════════════
+            VStack(spacing: 5) {
+
+                // ── Строка 1: Источник + Snapshot + Recordings ────────
+                HStack(spacing: 6) {
+                    Button { engine.toggleMic() } label: {
+                        Label(engine.mode == .mic ? "MIC ON" : "MIC",
+                              systemImage: "mic.fill")
+                            .frame(minWidth: 58, alignment: .leading)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(engine.mode == .mic ? .green : .gray.opacity(0.4))
+                    .keyboardShortcut("m", modifiers: .command)
+
+                    if engine.mode == .mic || engine.isRecording {
+                        VUMeterView(levelDb: engine.inputLevelDb)
+                            .frame(width: 72, height: 18)
+                            .transition(.opacity)
+                    }
+
+                    if engine.mode == .mic {
+                        Button { engine.toggleMonitor() } label: {
+                            Label(engine.monitorEnabled ? "Monitor ON" : "Monitor",
+                                  systemImage: engine.monitorEnabled ? "headphones.circle.fill" : "headphones")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(engine.monitorEnabled ? .green : .gray.opacity(0.4))
+                        .help("Hear mic through output. OFF by default to prevent feedback.")
+                        .transition(.opacity.combined(with: .move(edge: .leading)))
+
+                        Button {
+                            if engine.isRecording { engine.stopRecording() }
+                            else                  { engine.startRecording() }
+                        } label: {
+                            if engine.isRecording {
+                                let m = engine.recordingSeconds / 60
+                                let s = engine.recordingSeconds % 60
+                                Label(String(format: "● %d:%02d", m, s),
+                                      systemImage: "stop.circle.fill")
+                                    .monospacedDigit()
+                                    .frame(minWidth: 72, alignment: .leading)
+                            } else {
+                                Label("Record", systemImage: "record.circle")
+                                    .frame(minWidth: 72, alignment: .leading)
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(engine.isRecording ? .red : .gray.opacity(0.4))
+                        .help(engine.isRecording
+                              ? "Stop recording — file will be loaded automatically"
+                              : "Record mic input to WAV (pre-EQ, dry signal)")
+                        .keyboardShortcut("r", modifiers: .command)
+                        .transition(.opacity.combined(with: .move(edge: .leading)))
+                    }
+
+                    Divider().frame(height: 22)
+
+                    Button { showFileImporter = true } label: {
+                        Label("Open File", systemImage: "folder")
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button { engine.toggleFilePlayback() } label: {
+                        Label(engine.mode == .file ? "Stop" : "Play File",
+                              systemImage: engine.mode == .file ? "stop.fill" : "play.fill")
+                            .frame(minWidth: 58, alignment: .leading)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(engine.mode == .file ? .orange : .blue)
+                    .disabled(engine.loadedFileName.isEmpty && engine.mode != .file)
+                    .keyboardShortcut(.space, modifiers: [])
+
+                    if !engine.loadedFileName.isEmpty {
+                        Label(engine.loadedFileName, systemImage: "music.note")
+                            .font(.body)
+                            .foregroundStyle(.primary.opacity(0.7))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .frame(maxWidth: 200, alignment: .leading)
+                    }
+
+                    Spacer()
+
+                    Button { engine.takeSnapshot() } label: { Image(systemName: "camera") }
+                        .buttonStyle(.bordered)
+                        .help("Snapshot: freeze current pre-EQ spectrum")
+
+                    if !engine.snapshotFrame.freqs.isEmpty {
+                        Button { engine.clearSnapshot() } label: { Image(systemName: "camera.badge.minus") }
+                            .buttonStyle(.bordered)
+                            .help("Clear snapshot")
+                            .transition(.opacity)
+                    }
+
+                    Button { engine.showRecordingsInFinder() } label: {
+                        Label("Recordings", systemImage: "recordingtape")
+                    }
+                    .buttonStyle(.bordered)
+                    .help("Show GuitarEQ Recordings folder in Finder")
+                }
+
+                // ── Строка 2: AutoEQ + Визуализация + Пресеты ────────
+                HStack(spacing: 6) {
+                    Button { engine.startAutoEQ() } label: {
+                        ZStack {
+                            Label("AutoEQ", systemImage: "wand.and.stars")
+                                .opacity(engine.isAutoEQRunning ? 0 : 1)
+                            HStack(spacing: 5) {
+                                ProgressView(value: engine.autoEQProgress).frame(width: 44)
+                                Text("Analyzing…")
+                            }
+                            .opacity(engine.isAutoEQRunning ? 1 : 0)
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.purple)
+                    .disabled(engine.isAutoEQRunning || engine.mode == .idle)
+                    .help("AutoEQ: analyze then adjust bands (⌘↵)")
+                    .keyboardShortcut(.return, modifiers: .command)
+
+                    Picker(selection: $engine.selectedProfileIndex, label: EmptyView()) {
+                        ForEach(AudioEngineManager.profiles.indices, id: \.self) { i in
+                            Text(AudioEngineManager.profiles[i].name).tag(i)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(width: 162)
+                    .help("AutoEQ profile: Guitar, Vocal or Flat")
+
+                    Picker(selection: $engine.autoEQDuration, label: EmptyView()) {
+                        Text("4s").tag(4.0)
+                        Text("8s").tag(8.0)
+                        Text("16s").tag(16.0)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(width: 90)
+                    .help("AutoEQ analysis duration")
+
+                    Divider().frame(height: 22)
+
+                    Button { engine.togglePreEQ() } label: {
+                        Label("Pre-EQ", systemImage: "waveform")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(engine.showPreEQ ? .blue : .gray.opacity(0.35))
+                    .help("Show/hide Pre-EQ spectrum")
+
+                    Button { engine.togglePeakSource() } label: {
+                        Image(systemName: "waveform.badge.exclamationmark")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(engine.peakOnPost ? .blue : .gray.opacity(0.35))
+                    .help(engine.peakOnPost ? "Peaks: Equalized → click for Original"
+                                            : "Peaks: Original → click for Equalized")
+
+                    Divider().frame(height: 22)
+
+                    Button { showPresetsPanel.toggle() } label: {
+                        Label("Presets", systemImage: "list.star")
+                    }
+                    .buttonStyle(.bordered)
+                    .popover(isPresented: $showPresetsPanel) {
+                        PresetsPanel(engine: engine, showSaveSheet: $showSaveSheet, newPresetName: $newPresetName)
+                    }
+
+                    Button { engine.copyEQToClipboard() } label: {
+                        Image(systemName: "doc.on.clipboard")
+                    }
+                    .buttonStyle(.bordered)
+                    .help("Copy EQ to clipboard")
+
+                    Spacer()
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 10)
+            .padding(.bottom, 8)
+
+            Divider()
+
+            // ══════════════════════════════════════════════════════════
+            // ── Спектр (заполняет оставшееся пространство) ────────────
+            // ══════════════════════════════════════════════════════════
             SpectrumView(
                 pre:        engine.showPreEQ ? engine.preFrame : SpectrumFrame(freqs: [], magsDb: []),
                 post:       engine.postFrame,
@@ -24,11 +210,9 @@ struct ContentView: View {
                 yMax: -10,
                 peakSource: engine.peakOnPost ? .post : .pre
             )
-            .frame(minHeight: 260)
+            .frame(minHeight: 200)
             .frame(maxHeight: .infinity)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay(alignment: .topTrailing) {
-                // Бейдж режима — только когда активен
                 if engine.mode != .idle {
                     Label(engine.mode == .mic ? "MIC" : "FILE",
                           systemImage: engine.mode == .mic ? "mic.fill" : "doc.fill")
@@ -42,201 +226,73 @@ struct ContentView: View {
 
             Divider()
 
-            // ── Строка 1: Источник ───────────────────────────────────
-            HStack(spacing: 6) {
-                // Главные: MIC / File — с текстом
-                Button {
-                    engine.toggleMic()
-                } label: {
-                    Label(engine.mode == .mic ? "MIC ON" : "MIC", systemImage: "mic.fill")
-                        .frame(minWidth: 50, alignment: .leading)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(engine.mode == .mic ? .green : .gray.opacity(0.4))
-                .keyboardShortcut("m", modifiers: .command)
+            // ══════════════════════════════════════════════════════════
+            // ── EQ зона: кнопки слева + слайдеры во всю ширину ────────
+            // ══════════════════════════════════════════════════════════
+            HStack(alignment: .bottom, spacing: 0) {
 
-                // VU-метр — виден только в MIC/Record режиме
-                if engine.mode == .mic || engine.isRecording {
-                    VUMeterView(levelDb: engine.inputLevelDb)
-                        .frame(width: 80, height: 20)
-                        .transition(.opacity)
-                }
-
-                // Monitor и Record — только в режиме MIC
-                if engine.mode == .mic {
-                    Button { engine.toggleMonitor() } label: {
-                        Label(engine.monitorEnabled ? "Monitor ON" : "Monitor",
-                              systemImage: engine.monitorEnabled ? "headphones.circle.fill" : "headphones")
+                // Кнопки EQ (фиксированная ширина)
+                VStack(spacing: 6) {
+                    Button { engine.toggleEQ() } label: {
+                        Label(engine.eqEnabled ? "EQ ON" : "EQ OFF",
+                              systemImage: "slider.horizontal.3")
+                            .frame(minWidth: 72, alignment: .leading)
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(engine.monitorEnabled ? .green : .gray.opacity(0.4))
-                    .help("Hear mic through output device. OFF by default to prevent feedback.")
-                    .transition(.opacity.combined(with: .move(edge: .leading)))
+                    .tint(engine.eqEnabled ? .green : .gray.opacity(0.4))
 
-                    Button {
-                        if engine.isRecording { engine.stopRecording() }
-                        else                  { engine.startRecording() }
-                    } label: {
-                        if engine.isRecording {
-                            let m = engine.recordingSeconds / 60
-                            let s = engine.recordingSeconds % 60
-                            Label(String(format: "● %d:%02d", m, s),
-                                  systemImage: "stop.circle.fill")
-                                .monospacedDigit()
-                                .frame(minWidth: 72, alignment: .leading)
-                        } else {
-                            Label("Record", systemImage: "record.circle")
-                                .frame(minWidth: 72, alignment: .leading)
-                        }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(engine.isRecording ? .red : .gray.opacity(0.4))
-                    .help(engine.isRecording
-                          ? "Stop recording — file will be loaded automatically"
-                          : "Record mic input to WAV (pre-EQ, dry signal)")
-                    .keyboardShortcut("r", modifiers: .command)
-                    .transition(.opacity.combined(with: .move(edge: .leading)))
-                }
-
-                Divider().frame(height: 22)
-
-                Button { showFileImporter = true } label: {
-                    Label("Open File", systemImage: "folder")
-                }
-                .buttonStyle(.bordered)
-
-                Button {
-                    engine.toggleFilePlayback()
-                } label: {
-                    Label(engine.mode == .file ? "Stop" : "Play File",
-                          systemImage: engine.mode == .file ? "stop.fill" : "play.fill")
-                        .frame(minWidth: 54, alignment: .leading)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(engine.mode == .file ? .orange : .blue)
-                .disabled(engine.loadedFileName.isEmpty && engine.mode != .file)
-                .keyboardShortcut(.space, modifiers: [])
-
-                if !engine.loadedFileName.isEmpty {
-                    Label(engine.loadedFileName, systemImage: "music.note")
-                        .font(.body)
-                        .foregroundStyle(.primary.opacity(0.7))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .frame(maxWidth: 180, alignment: .leading)
-                }
-
-                Spacer()
-
-                // Snapshot
-                Button { engine.takeSnapshot() } label: {
-                    Image(systemName: "camera")
-                }
-                .buttonStyle(.bordered)
-                .help("Snapshot: freeze current pre-EQ spectrum for comparison")
-
-                if !engine.snapshotFrame.freqs.isEmpty {
-                    Button { engine.clearSnapshot() } label: {
-                        Image(systemName: "camera.badge.minus")
+                    Button { engine.resetEQ() } label: {
+                        Label("Reset", systemImage: "arrow.counterclockwise")
+                            .frame(minWidth: 72, alignment: .leading)
                     }
                     .buttonStyle(.bordered)
-                    .help("Clear snapshot")
-                    .transition(.opacity)
-                }
+                    .help("Reset all bands to 0 dB")
 
-                // Показать папку с записями в Finder
-                Button { engine.showRecordingsInFinder() } label: {
-                    Label("Recordings", systemImage: "recordingtape")
+                    Button { engine.undoEQ() } label: {
+                        Label("Undo", systemImage: "arrow.uturn.backward")
+                            .frame(minWidth: 72, alignment: .leading)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(!engine.canUndo)
+                    .help("Undo (⌘Z)")
+                    .keyboardShortcut("z", modifiers: .command)
                 }
-                .buttonStyle(.bordered)
-                .help("Show GuitarEQ Recordings folder in Finder")
-            }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
 
-            // ── Строка 2: Анализ + Визуализация + Пресеты ───────────────
-            HStack(spacing: 6) {
-                // AutoEQ
-                Button {
-                    engine.startAutoEQ()
-                } label: {
-                    ZStack {
-                        Label("AutoEQ", systemImage: "wand.and.stars")
-                            .opacity(engine.isAutoEQRunning ? 0 : 1)
-                        HStack(spacing: 5) {
-                            ProgressView(value: engine.autoEQProgress)
-                                .frame(width: 44)
-                            Text("Analyzing…")
-                        }
-                        .opacity(engine.isAutoEQRunning ? 1 : 0)
+                // Вертикальный разделитель
+                Rectangle()
+                    .fill(Color(nsColor: .separatorColor))
+                    .frame(width: 1)
+                    .padding(.vertical, 10)
+
+                // Слайдеры — занимают всю оставшуюся ширину
+                HStack(alignment: .bottom, spacing: 0) {
+                    ForEach(Array(AudioEngineManager.eqFrequencies.enumerated()), id: \.offset) { idx, freq in
+                        EQBandSlider(
+                            label: freqLabel(freq),
+                            gain: Binding(
+                                get: { Double(engine.eqGains[idx]) },
+                                set: { engine.updateGain(index: idx, value: Float($0)) }
+                            ),
+                            range: Double(AudioEngineManager.eqRange.lowerBound)...Double(AudioEngineManager.eqRange.upperBound),
+                            onDragStart: { if engine.eqEnabled { engine.pushUndo() } }
+                        )
                     }
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(.purple)
-                .disabled(engine.isAutoEQRunning || engine.mode == .idle)
-                .help("AutoEQ: analyze then adjust bands (⌘↵)")
-                .keyboardShortcut(.return, modifiers: .command)
-
-                // Профиль AutoEQ
-                Picker(selection: $engine.selectedProfileIndex, label: EmptyView()) {
-                    ForEach(AudioEngineManager.profiles.indices, id: \.self) { i in
-                        Text(AudioEngineManager.profiles[i].name).tag(i)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 162)
-                .help("AutoEQ profile: Guitar, Vocal or Flat")
-
-                // Длительность анализа
-                Picker(selection: $engine.autoEQDuration, label: EmptyView()) {
-                    Text("4s").tag(4.0)
-                    Text("8s").tag(8.0)
-                    Text("16s").tag(16.0)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 85)
-                .help("AutoEQ analysis duration")
-
-                Divider().frame(height: 22)
-
-                // Визуализация
-                Button { engine.togglePreEQ() } label: {
-                    Label("Pre-EQ", systemImage: "waveform")
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(engine.showPreEQ ? .blue : .gray.opacity(0.35))
-                .help("Show/hide Pre-EQ spectrum")
-
-                Button { engine.togglePeakSource() } label: {
-                    Image(systemName: "waveform.badge.exclamationmark")
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(engine.peakOnPost ? .blue : .gray.opacity(0.35))
-                .help(engine.peakOnPost ? "Peaks: Equalized → click for Original"
-                                        : "Peaks: Original → click for Equalized")
-
-                Divider().frame(height: 22)
-
-                // Пресеты
-                Button { showPresetsPanel.toggle() } label: {
-                    Label("Presets", systemImage: "list.star")
-                }
-                .buttonStyle(.bordered)
-                .popover(isPresented: $showPresetsPanel) {
-                    PresetsPanel(engine: engine, showSaveSheet: $showSaveSheet, newPresetName: $newPresetName)
-                }
-
-                Button { engine.copyEQToClipboard() } label: {
-                    Image(systemName: "doc.on.clipboard")
-                }
-                .buttonStyle(.bordered)
-                .help("Copy EQ to clipboard")
-
-                Spacer()
+                .frame(maxWidth: .infinity)
+                .opacity(engine.eqEnabled ? 1.0 : 0.4)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
             }
+            .frame(height: 165)
 
-            // ── Устройства ───────────────────────────────────────────
-            HStack(spacing: 12) {
+            Divider()
+
+            // ══════════════════════════════════════════════════════════
+            // ── Строка устройств + Статус + CPU/RAM ───────────────────
+            // ══════════════════════════════════════════════════════════
+            HStack(spacing: 10) {
                 Label("In:", systemImage: "mic").font(.body).foregroundStyle(.secondary)
                 Picker("", selection: Binding(
                     get: { engine.selectedInputID ?? 0 },
@@ -245,20 +301,20 @@ struct ContentView: View {
                     ForEach(engine.inputDevices) { Text($0.name).tag($0.id) }
                 }
                 .labelsHidden()
-                .frame(maxWidth: 280)
+                .frame(maxWidth: 240)
 
-                // Output device — только чтение. Менять через macOS: меню 🔊 в строке состояния
                 Label("Out:", systemImage: "speaker.wave.2").font(.body).foregroundStyle(.secondary)
                 HStack(spacing: 3) {
                     Text(engine.outputDevices.first(where: { $0.id == engine.selectedOutputID })?.name ?? "System default")
                         .font(.body)
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
                     Image(systemName: "lock.fill")
-                        .font(.system(size: 12))
+                        .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 }
                 .help("Output is read-only — change via macOS volume menu in menu bar")
-                .frame(maxWidth: 220, alignment: .leading)
+                .frame(maxWidth: 200, alignment: .leading)
 
                 Button { engine.refreshDevices() } label: {
                     Image(systemName: "arrow.clockwise")
@@ -275,19 +331,16 @@ struct ContentView: View {
 
                 Spacer()
 
-                // ── Нагрузка CPU / RAM ────────────────────────────────
                 HStack(spacing: 10) {
                     Label {
-                        Text(String(format: "%.1f%%", perf.cpuPercent))
-                            .monospacedDigit()
+                        Text(String(format: "%.1f%%", perf.cpuPercent)).monospacedDigit()
                     } icon: {
                         Image(systemName: "cpu")
                     }
                     .foregroundStyle(perf.cpuPercent > 60 ? .orange : .secondary)
 
                     Label {
-                        Text(String(format: "%.0f MB", perf.memoryMB))
-                            .monospacedDigit()
+                        Text(String(format: "%.0f MB", perf.memoryMB)).monospacedDigit()
                     } icon: {
                         Image(systemName: "memorychip")
                     }
@@ -295,60 +348,9 @@ struct ContentView: View {
                 }
                 .font(.body)
             }
-
-            Divider()
-
-            // ── EQ зона: кнопки управления + слайдеры в одну строку ──
-            HStack(alignment: .bottom, spacing: 12) {
-                // EQ-кнопки
-                VStack(spacing: 6) {
-                    Button { engine.toggleEQ() } label: {
-                        Label(engine.eqEnabled ? "EQ ON" : "EQ OFF",
-                              systemImage: "slider.horizontal.3")
-                            .frame(minWidth: 64, alignment: .leading)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(engine.eqEnabled ? .green : .gray.opacity(0.4))
-
-                    Button { engine.resetEQ() } label: {
-                        Label("Reset", systemImage: "arrow.counterclockwise")
-                    }
-                    .buttonStyle(.bordered)
-                    .help("Reset all bands to 0 dB")
-
-                    Button { engine.undoEQ() } label: {
-                        Label("Undo", systemImage: "arrow.uturn.backward")
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(!engine.canUndo)
-                    .help("Undo (⌘Z)")
-                    .keyboardShortcut("z", modifiers: .command)
-                }
-
-                Divider()
-
-                // Слайдеры
-                HStack(alignment: .bottom, spacing: 0) {
-                    ForEach(Array(AudioEngineManager.eqFrequencies.enumerated()), id: \.offset) { idx, freq in
-                        EQBandSlider(
-                            label: freqLabel(freq),
-                            gain: Binding(
-                                get: { Double(engine.eqGains[idx]) },
-                                set: { engine.updateGain(index: idx, value: Float($0)) }
-                            ),
-                            range: Double(AudioEngineManager.eqRange.lowerBound)...Double(AudioEngineManager.eqRange.upperBound),
-                            onDragStart: { if engine.eqEnabled { engine.pushUndo() } }
-                        )
-                        .frame(width: 60)
-                    }
-                }
-                .opacity(engine.eqEnabled ? 1.0 : 0.4)
-
-                Spacer()
-            }
-            .padding(.horizontal, 4)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
         }
-        .padding(12)
         .fileImporter(isPresented: $showFileImporter, allowedContentTypes: [.audio],
                       allowsMultipleSelection: false) { result in
             guard case let .success(urls) = result, let url = urls.first else { return }
@@ -487,26 +489,21 @@ struct EQBandSlider: View {
     private let sliderHeight: CGFloat = 110
 
     var body: some View {
-        GeometryReader { geo in
-            VStack(spacing: 4) {
-                // dB значение — фиксированная ширина, чтобы не прыгало
-                Text(String(format: gain >= 0 ? "+%.1f" : "%.1f", gain))
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundStyle(gainColor)
-                    .frame(width: 42, height: 16)
+        VStack(spacing: 4) {
+            Text(String(format: gain >= 0 ? "+%.1f" : "%.1f", gain))
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(gainColor)
+                .frame(height: 16)
 
-                // Вертикальный слайдер через drag
-                VerticalSlider(value: $gain, range: range, height: sliderHeight,
-                               onDragStart: onDragStart)
+            VerticalSlider(value: $gain, range: range, height: sliderHeight,
+                           onDragStart: onDragStart)
 
-                // Метка частоты
-                Text(label)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.75))
-                    .frame(height: 16)
-            }
-            .frame(width: geo.size.width, alignment: .center)
+            Text(label)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.75))
+                .frame(height: 16)
         }
+        .frame(maxWidth: .infinity)
         .frame(height: sliderHeight + 40)
     }
 
@@ -528,7 +525,6 @@ struct VerticalSlider: View {
 
     var body: some View {
         GeometryReader { geo in
-            let w = geo.size.width
             let h = geo.size.height
             let frac = CGFloat((value - range.lowerBound) / (range.upperBound - range.lowerBound))
             let thumbY = h * (1 - frac)
