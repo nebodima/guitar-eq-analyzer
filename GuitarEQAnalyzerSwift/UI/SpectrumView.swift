@@ -35,10 +35,10 @@ struct SpectrumView: View {
                         drawLine(ctx: &ctx, frame: snapshot, color: .yellow.opacity(0.65),
                                  w: w, h: h, ox: lp, oy: 8, lo: lo, hi: hi, dash: [5, 3])
                     }
-                    drawLine(ctx: &ctx, frame: pre,  color: .blue.opacity(0.85),
+                    drawLine(ctx: &ctx, frame: post, color: .green.opacity(0.90),
                              w: w, h: h, ox: lp, oy: 8, lo: lo, hi: hi)
-                    drawLine(ctx: &ctx, frame: post, color: .green.opacity(0.95),
-                             w: w, h: h, ox: lp, oy: 8, lo: lo, hi: hi)
+                    drawLine(ctx: &ctx, frame: pre,  color: .blue.opacity(0.80),
+                             w: w, h: h, ox: lp, oy: 8, lo: lo, hi: hi, dash: [6, 3])
                     if !eqCurve.freqs.isEmpty {
                         // Якорим EQ curve на фиксированном уровне нижней четверти экрана
                         // (не зависит от мгновенного сигнала — не скачет)
@@ -72,8 +72,8 @@ struct SpectrumView: View {
 
                 // ── Легенда ───────────────────────────────────────────
                 VStack(alignment: .leading, spacing: 4) {
-                    legendRow(.blue,   "Pre-EQ",   dash: [])
-                    legendRow(.green,  "Post-EQ",  dash: [])
+                    legendRow(.blue,   "Original", dash: [6, 3])
+                    legendRow(.green,  "Equalized", dash: [])
                     if !eqCurve.freqs.isEmpty {
                         legendRow(.orange, "EQ curve", dash: [])
                     }

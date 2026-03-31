@@ -48,6 +48,7 @@ final class AudioEngineManager: ObservableObject {
     @Published var lastRecordingURL: URL? = nil
     @Published var recordingSeconds: Int  = 0
     @Published var inputLevelDb: Float    = -80   // текущий RMS уровень входа (dB)
+    @Published var outputLevelDb: Float   = -80   // текущий RMS уровень выхода (после EQ)
 
     // AutoEQ accumulator
     private var accumMags:  [Float] = []
@@ -549,8 +550,9 @@ final class AudioEngineManager: ObservableObject {
     }
 
     func selectOutputDevice(_ deviceID: AudioDeviceID?) {
-        // Output switching через CoreAudio property ненадёжно с AVAudioEngine → не меняем
+        guard selectedOutputID != deviceID else { return }
         selectedOutputID = deviceID
+        Task { await changeDevice(newInput: nil, newOutput: deviceID) }
     }
 
     /// Полная смена устройства: stop → set → reconnect graph если input → start
@@ -705,22 +707,46 @@ final class AudioEngineManager: ObservableObject {
 
     private func installTaps() {
         removeTaps()
+        // Вход (pre-EQ): анализ спектра + VU вход
         sourceMixer.installTap(onBus: 0, bufferSize: 1024, format: sourceMixer.outputFormat(forBus: 0)) { [weak self] buffer, _ in
-            guard let self else { return }
+            guard let self, self.mode != .idle else { return }
             self.analyzer?.appendPre(buffer)
-            // RMS для VU-метра
             if let ch = buffer.floatChannelData?.pointee {
                 let n = vDSP_Length(buffer.frameLength)
                 var rms: Float = 0
                 vDSP_rmsqv(ch, 1, &rms, n)
                 let db = rms > 1e-9 ? 20 * log10f(rms) : -80
-                DispatchQueue.main.async { self.inputLevelDb = db }
+                // обновляем UI только при заметном изменении уровня
+                if abs(db - self.inputLevelDb) > 0.3 {
+                    DispatchQueue.main.async { self.inputLevelDb = db }
+                }
+            }
+        }
+        // Выход (post-EQ): VU выход — учитываем мьют главного миксера
+        eqNode.installTap(onBus: 0, bufferSize: 1024, format: eqNode.outputFormat(forBus: 0)) { [weak self] buffer, _ in
+            guard let self, self.mode != .idle else { return }
+            let vol = self.engine.mainMixerNode.outputVolume
+            if vol < 0.01 {
+                if self.outputLevelDb != -80 {
+                    DispatchQueue.main.async { self.outputLevelDb = -80 }
+                }
+                return
+            }
+            if let ch = buffer.floatChannelData?.pointee {
+                let n = vDSP_Length(buffer.frameLength)
+                var rms: Float = 0
+                vDSP_rmsqv(ch, 1, &rms, n)
+                let db = rms > 1e-9 ? 20 * log10f(rms) : -80
+                if abs(db - self.outputLevelDb) > 0.3 {
+                    DispatchQueue.main.async { self.outputLevelDb = db }
+                }
             }
         }
     }
 
     private func removeTaps() {
         sourceMixer.removeTap(onBus: 0)
+        eqNode.removeTap(onBus: 0)
     }
 
     private func startEngineIfNeeded() {
@@ -739,7 +765,7 @@ final class AudioEngineManager: ObservableObject {
 
     private func startDisplayUpdates() {
         let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .userInteractive))
-        timer.schedule(deadline: .now() + 0.1, repeating: .milliseconds(50))
+        timer.schedule(deadline: .now() + 0.1, repeating: .milliseconds(80))
         timer.setEventHandler { [weak self] in
             guard let self, let analyzer = self.analyzer else { return }
             guard self.mode != .idle else { return }
@@ -782,6 +808,8 @@ final class AudioEngineManager: ObservableObject {
             // Не вызываем engine.pause() — start() после pause() без prepare() ненадёжен
             // на macOS при ручном назначении AUHAL устройств.
             // Движок остаётся запущенным, выход заглушён через outputVolume=0.
+            inputLevelDb  = -80
+            outputLevelDb = -80
             statusText = "Ready"
         case .mic:
             startEngineIfNeeded()
