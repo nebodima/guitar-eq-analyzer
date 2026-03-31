@@ -55,8 +55,8 @@ struct SpectrumView: View {
                 ForEach(ticks, id: \.self) { db in
                     let y = 8 + CGFloat(yFrac(db: db, lo: lo, hi: hi)) * h
                     Text("\(Int(db))")
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.55))
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.6))
                         .frame(width: lp - 4, alignment: .trailing)
                         .position(x: (lp - 4) / 2, y: y)
                 }
@@ -65,8 +65,8 @@ struct SpectrumView: View {
                 ForEach(freqTicks, id: \.self) { f in
                     let x = lp + CGFloat(xFrac(f)) * w
                     Text(freqLabel(f))
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.55))
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.6))
                         .position(x: x, y: geo.size.height - bp / 2 - 2)
                 }
 
@@ -81,7 +81,7 @@ struct SpectrumView: View {
                         legendRow(.yellow, "Snapshot", dash: [5, 3])
                     }
                 }
-                .font(.system(size: 11, weight: .medium))
+                .font(.system(size: 12, weight: .medium))
                 .padding(8)
                 .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 6))
                 .padding(.top, 12).padding(.leading, lp + 6)
@@ -94,7 +94,7 @@ struct SpectrumView: View {
                             .font(.system(size: 36))
                             .foregroundStyle(.gray.opacity(0.45))
                         Text("Click MIC or open a file to start analysis")
-                            .font(.footnote)
+                            .font(.body)
                             .foregroundStyle(.gray.opacity(0.6))
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -106,7 +106,7 @@ struct SpectrumView: View {
                     let px = lp + CGFloat(xFrac(pk.freq)) * w
                     let py = 8 + CGFloat(yFrac(db: pk.db, lo: lo, hi: hi)) * h
                     Text("\(freqLabel(pk.freq))  \(String(format: "%.0f", pk.db)) dB")
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
                         .foregroundStyle(.yellow)
                         .padding(.horizontal, 5).padding(.vertical, 2)
                         .background(.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 4))

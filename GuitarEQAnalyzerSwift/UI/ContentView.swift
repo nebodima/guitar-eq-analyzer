@@ -85,7 +85,7 @@ struct ContentView: View {
 
                 if !engine.loadedFileName.isEmpty {
                     Label(engine.loadedFileName, systemImage: "music.note")
-                        .font(.footnote)
+                        .font(.body)
                         .foregroundStyle(.primary.opacity(0.7))
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -208,7 +208,7 @@ struct ContentView: View {
 
             // ── Устройства ───────────────────────────────────────────
             HStack(spacing: 12) {
-                Label("In:", systemImage: "mic").font(.footnote).foregroundStyle(.secondary)
+                Label("In:", systemImage: "mic").font(.body).foregroundStyle(.secondary)
                 Picker("", selection: Binding(
                     get: { engine.selectedInputID ?? 0 },
                     set: { engine.selectInputDevice($0) }
@@ -219,13 +219,13 @@ struct ContentView: View {
                 .frame(maxWidth: 280)
 
                 // Output device — только чтение. Менять через macOS: меню 🔊 в строке состояния
-                Label("Out:", systemImage: "speaker.wave.2").font(.footnote).foregroundStyle(.secondary)
+                Label("Out:", systemImage: "speaker.wave.2").font(.body).foregroundStyle(.secondary)
                 HStack(spacing: 3) {
                     Text(engine.outputDevices.first(where: { $0.id == engine.selectedOutputID })?.name ?? "System default")
-                        .font(.footnote)
+                        .font(.body)
                         .foregroundStyle(.secondary)
                     Image(systemName: "lock.fill")
-                        .font(.system(size: 10))
+                        .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 }
                 .help("Output is read-only — change via macOS volume menu in menu bar")
@@ -240,7 +240,7 @@ struct ContentView: View {
                 Spacer()
 
                 Text(engine.statusText)
-                    .font(.footnote)
+                    .font(.body)
                     .foregroundStyle(statusColor)
                     .lineLimit(1)
 
@@ -264,7 +264,7 @@ struct ContentView: View {
                     }
                     .foregroundStyle(perf.memoryMB > 300 ? .orange : .secondary)
                 }
-                .font(.footnote)
+                .font(.body)
             }
 
             Divider()
@@ -272,8 +272,8 @@ struct ContentView: View {
             // ── EQ Слайдеры ──────────────────────────────────────────
             HStack(spacing: 6) {
                 Text("EQ BANDS")
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(.primary.opacity(0.6))
+                    .font(.system(size: 12, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.primary.opacity(0.65))
                 Rectangle()
                     .fill(.gray.opacity(0.25))
                     .frame(height: 1)
@@ -358,7 +358,7 @@ struct PresetsPanel: View {
             if engine.namedPresets.isEmpty {
                 Text("No saved presets")
                     .foregroundStyle(.secondary)
-                    .font(.caption)
+                    .font(.body)
                     .padding()
             } else {
                 List {
@@ -367,7 +367,7 @@ struct PresetsPanel: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(preset.name).font(.body)
                                 Text(preset.date, style: .date)
-                                    .font(.caption2).foregroundStyle(.secondary)
+                                    .font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer()
                             Button("Load") { engine.loadNamedPreset(preset) }
@@ -420,9 +420,9 @@ struct EQBandSlider: View {
             VStack(spacing: 4) {
                 // dB значение — фиксированная ширина, чтобы не прыгало
                 Text(String(format: gain >= 0 ? "+%.1f" : "%.1f", gain))
-                    .font(.system(size: 11, design: .monospaced))
+                    .font(.system(size: 12, design: .monospaced))
                     .foregroundStyle(gainColor)
-                    .frame(width: 40, height: 16)
+                    .frame(width: 42, height: 16)
 
                 // Вертикальный слайдер через drag
                 VerticalSlider(value: $gain, range: range, height: sliderHeight,
@@ -430,8 +430,8 @@ struct EQBandSlider: View {
 
                 // Метка частоты
                 Text(label)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.7))
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.75))
                     .frame(height: 16)
             }
             .frame(width: geo.size.width, alignment: .center)
