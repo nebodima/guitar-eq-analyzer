@@ -181,7 +181,7 @@ struct ContentView: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .frame(width: 145)
+                .frame(width: 162)
                 .help("AutoEQ profile: Guitar, Vocal or Flat target curve")
 
                 Picker(selection: $engine.autoEQDuration, label: EmptyView()) {
@@ -191,7 +191,7 @@ struct ContentView: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .frame(width: 80)
+                .frame(width: 85)
                 .help("AutoEQ analysis duration")
 
                 Divider().frame(height: 22)
@@ -205,12 +205,13 @@ struct ContentView: View {
                 .help("Show/hide Pre-EQ spectrum (blue)")
 
                 Button { engine.togglePeakSource() } label: {
-                    Label(engine.peakOnPost ? "Peaks: Equalized" : "Peaks: Original",
-                          systemImage: "waveform.badge.exclamationmark")
+                    Image(systemName: "waveform.badge.exclamationmark")
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(engine.peakOnPost ? .blue : .gray.opacity(0.35))
-                .help("Show resonance peaks from Original (pre-EQ) or Equalized (post-EQ) spectrum")
+                .help(engine.peakOnPost
+                      ? "Peaks: Equalized (post-EQ) — click to switch to Original"
+                      : "Peaks: Original (pre-EQ) — click to switch to Equalized")
 
                 Divider().frame(height: 22)
 
