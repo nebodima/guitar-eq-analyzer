@@ -45,6 +45,8 @@ final class AudioEngineManager: ObservableObject {
     @Published var showPreEQ = true
     @Published var peakOnPost = false   // false = пики по pre-EQ, true = по post-EQ
     @Published var monitorEnabled = false   // OFF по умолчанию — иначе фидбек с динамиками
+    @Published var isRecording   = false
+    @Published var lastRecordingURL: URL? = nil
 
     // Сглаженный диапазон отображения (плавная адаптация, не скачет)
     @Published var displayRangeLo: Float = -110
@@ -124,6 +126,7 @@ final class AudioEngineManager: ObservableObject {
     private let presetStore = PresetStore()
 
     private var currentFile: AVAudioFile?
+    private var recordingFile: AVAudioFile?
     private var displayTimer: DispatchSourceTimer?
     private var analyzer: SpectrumAnalyzer?
     private var isRestartingGraph = false
@@ -187,8 +190,72 @@ final class AudioEngineManager: ObservableObject {
     }
 
     func toggleMic() {
+        if isRecording { stopRecording() }
         mode = (mode == .mic) ? .idle : .mic
         applySourceMode()
+    }
+
+    // ── Запись с микрофона ────────────────────────────────────────────────
+    func startRecording() {
+        guard mode == .mic, !isRecording else { return }
+
+        let fmt = micMixer.outputFormat(forBus: 0)
+        guard fmt.sampleRate > 0 else {
+            statusText = "Recording error: invalid audio format"
+            return
+        }
+
+        // Имя файла с датой/временем → ~/Documents/GuitarEQ Recordings/
+        let dir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Documents/GuitarEQ Recordings", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        let stamp = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium)
+            .replacingOccurrences(of: ":", with: "-")
+        let url = dir.appendingPathComponent("Recording \(stamp).wav")
+
+        do {
+            let settings: [String: Any] = [
+                AVFormatIDKey:            kAudioFormatLinearPCM,
+                AVSampleRateKey:          fmt.sampleRate,
+                AVNumberOfChannelsKey:    fmt.channelCount,
+                AVLinearPCMBitDepthKey:   32,
+                AVLinearPCMIsFloatKey:    true,
+                AVLinearPCMIsNonInterleaved: false
+            ]
+            recordingFile = try AVAudioFile(forWriting: url, settings: settings,
+                                             commonFormat: .pcmFormatFloat32,
+                                             interleaved: fmt.channelCount > 1)
+
+            // Пишем из micMixer — это сигнал ДО эквалайзера
+            micMixer.installTap(onBus: 0, bufferSize: 4096, format: fmt) { [weak self] buf, _ in
+                guard let self, let file = self.recordingFile else { return }
+                try? file.write(from: buf)
+            }
+
+            isRecording = true
+            lastRecordingURL = url
+            statusText = "Recording… \(url.lastPathComponent)"
+            AppLog.write("startRecording: \(url.path)")
+        } catch {
+            statusText = "Recording error: \(error.localizedDescription)"
+        }
+    }
+
+    func stopRecording() {
+        guard isRecording else { return }
+        micMixer.removeTap(onBus: 0)
+        recordingFile = nil
+        isRecording = false
+
+        if let url = lastRecordingURL {
+            statusText = "Saved: \(url.lastPathComponent)"
+            AppLog.write("stopRecording: saved \(url.path)")
+            // Автозагружаем запись как файл — можно сразу нажать Play File
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                self.openFile(url: url)
+            }
+        }
     }
 
     func toggleFilePlayback() {

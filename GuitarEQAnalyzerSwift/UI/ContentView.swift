@@ -53,7 +53,7 @@ struct ContentView: View {
                 .buttonStyle(.borderedProminent)
                 .tint(engine.mode == .mic ? .green : .gray.opacity(0.4))
 
-                // Monitor — показываем только в режиме MIC (анимация через transition)
+                // Monitor и Record — только в режиме MIC
                 if engine.mode == .mic {
                     Button { engine.toggleMonitor() } label: {
                         Label(engine.monitorEnabled ? "Monitor ON" : "Monitor",
@@ -62,6 +62,21 @@ struct ContentView: View {
                     .buttonStyle(.borderedProminent)
                     .tint(engine.monitorEnabled ? .green : .gray.opacity(0.4))
                     .help("Hear mic through output device. OFF by default to prevent feedback.")
+                    .transition(.opacity.combined(with: .move(edge: .leading)))
+
+                    Button {
+                        if engine.isRecording { engine.stopRecording() }
+                        else                  { engine.startRecording() }
+                    } label: {
+                        Label(engine.isRecording ? "Stop Rec" : "Record",
+                              systemImage: engine.isRecording ? "stop.circle.fill" : "record.circle")
+                            .frame(minWidth: 64, alignment: .leading)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(engine.isRecording ? .red : .gray.opacity(0.4))
+                    .help(engine.isRecording
+                          ? "Stop recording and load file for playback"
+                          : "Record mic input to WAV file (pre-EQ)")
                     .transition(.opacity.combined(with: .move(edge: .leading)))
                 }
 
