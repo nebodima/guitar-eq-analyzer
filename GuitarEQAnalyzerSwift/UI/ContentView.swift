@@ -136,21 +136,21 @@ struct ContentView: View {
                 .disabled(engine.isAutoEQRunning || engine.mode == .idle)
                 .help("Play guitar for 4 sec, AutoEQ will flatten the response")
 
-                Picker("Profile", selection: $engine.selectedProfileIndex) {
+                Picker(selection: $engine.selectedProfileIndex, label: EmptyView()) {
                     ForEach(AudioEngineManager.profiles.indices, id: \.self) { i in
-                        let p = AudioEngineManager.profiles[i]
-                        Label(p.name, systemImage: p.icon).tag(i)
+                        Text(AudioEngineManager.profiles[i].name).tag(i)
                     }
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 200)
+                .labelsHidden()
+                .frame(width: 160)
                 .help("AutoEQ profile: Guitar, Vocal or Flat target curve")
 
                 Button { engine.togglePreEQ() } label: {
                     Label("Pre-EQ", systemImage: "waveform")
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(engine.showPreEQ ? .blue.opacity(0.7) : .gray.opacity(0.35))
+                .tint(engine.showPreEQ ? .blue : .gray.opacity(0.35))
                 .help("Show/hide Pre-EQ spectrum (blue)")
 
                 Button { engine.togglePeakSource() } label: {
@@ -158,7 +158,7 @@ struct ContentView: View {
                           systemImage: "waveform.badge.exclamationmark")
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(engine.peakOnPost ? .green.opacity(0.7) : .orange.opacity(0.6))
+                .tint(engine.peakOnPost ? .blue : .gray.opacity(0.35))
                 .help("Red peaks based on: Pre-EQ (original) or Post-EQ (after EQ processing)")
 
                 Divider().frame(height: 22)
@@ -170,7 +170,7 @@ struct ContentView: View {
                         .frame(minWidth: 52, alignment: .leading)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(engine.eqEnabled ? .blue : .gray.opacity(0.4))
+                .tint(engine.eqEnabled ? .green : .gray.opacity(0.4))
 
                 Button("Reset EQ") { engine.resetEQ() }
                     .buttonStyle(.bordered)
@@ -207,7 +207,7 @@ struct ContentView: View {
 
             // ── Устройства ───────────────────────────────────────────
             HStack(spacing: 12) {
-                Label("In:", systemImage: "mic").font(.caption).foregroundStyle(.secondary)
+                Label("In:", systemImage: "mic").font(.footnote).foregroundStyle(.secondary)
                 Picker("", selection: Binding(
                     get: { engine.selectedInputID ?? 0 },
                     set: { engine.selectInputDevice($0) }
@@ -218,10 +218,10 @@ struct ContentView: View {
                 .frame(maxWidth: 280)
 
                 // Output device — только чтение. Менять через macOS: меню 🔊 в строке состояния
-                Label("Out:", systemImage: "speaker.wave.2").font(.caption).foregroundStyle(.secondary)
+                Label("Out:", systemImage: "speaker.wave.2").font(.footnote).foregroundStyle(.secondary)
                 HStack(spacing: 3) {
                     Text(engine.outputDevices.first(where: { $0.id == engine.selectedOutputID })?.name ?? "System default")
-                        .font(.caption)
+                        .font(.footnote)
                         .foregroundStyle(.tertiary)
                     Image(systemName: "lock.fill")
                         .font(.system(size: 8))
@@ -239,7 +239,7 @@ struct ContentView: View {
                 Spacer()
 
                 Text(engine.statusText)
-                    .font(.caption)
+                    .font(.footnote)
                     .foregroundStyle(statusColor)
                     .lineLimit(1)
 
@@ -263,7 +263,7 @@ struct ContentView: View {
                     }
                     .foregroundStyle(perf.memoryMB > 300 ? .orange : .secondary)
                 }
-                .font(.caption)
+                .font(.footnote)
             }
 
             Divider()
@@ -271,7 +271,7 @@ struct ContentView: View {
             // ── EQ Слайдеры ──────────────────────────────────────────
             HStack(spacing: 6) {
                 Text("EQ BANDS")
-                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
                     .foregroundStyle(.secondary)
                 Rectangle()
                     .fill(.gray.opacity(0.25))
@@ -419,9 +419,9 @@ struct EQBandSlider: View {
             VStack(spacing: 4) {
                 // dB значение — фиксированная ширина, чтобы не прыгало
                 Text(String(format: gain >= 0 ? "+%.1f" : "%.1f", gain))
-                    .font(.system(size: 9, design: .monospaced))
+                    .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(gainColor)
-                    .frame(width: 36, height: 14)
+                    .frame(width: 40, height: 16)
 
                 // Вертикальный слайдер через drag
                 VerticalSlider(value: $gain, range: range, height: sliderHeight,
@@ -429,14 +429,14 @@ struct EQBandSlider: View {
 
                 // Метка частоты
                 Text(label)
-                    .font(.system(size: 9))
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
-                    .frame(height: 14)
+                    .frame(height: 16)
             }
             .frame(width: geo.size.width, alignment: .center)
         }
         .frame(maxWidth: .infinity)
-        .frame(height: sliderHeight + 36)
+        .frame(height: sliderHeight + 40)
     }
 
     private var gainColor: Color {
