@@ -320,18 +320,6 @@ struct ContentView: View {
 
             Divider()
 
-            // ── EQ Слайдеры ──────────────────────────────────────────
-            HStack(spacing: 6) {
-                Text("EQ BANDS")
-                    .font(.system(size: 12, weight: .bold, design: .monospaced))
-                    .foregroundStyle(.primary.opacity(0.65))
-                Rectangle()
-                    .fill(.gray.opacity(0.25))
-                    .frame(height: 1)
-            }
-            .padding(.horizontal, 4)
-            .padding(.top, 2)
-
             HStack(alignment: .bottom, spacing: 0) {
                 ForEach(Array(AudioEngineManager.eqFrequencies.enumerated()), id: \.offset) { idx, freq in
                     EQBandSlider(
