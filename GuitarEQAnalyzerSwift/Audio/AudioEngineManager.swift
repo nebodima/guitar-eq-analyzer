@@ -19,8 +19,8 @@ struct AudioDevice: Identifiable, Hashable {
 @MainActor
 final class AudioEngineManager: ObservableObject {
     static let eqFrequencies: [Float] = [80, 200, 400, 800, 1600, 3200, 6400]
-    static let defaultGains: [Float] = [-6.0, -5.0, -3.0, 1.0, 2.5, 2.5, 0.5]
-    static let eqQ: Float = 1.4
+    static let defaultGains: [Float] = [0, 0, 0, 0, 0, 0, 0]
+    static let eqQ: Float = 0.75   // октавы (AVAudioUnitEQ bandwidth); 0.75 oct ≈ Q 1.33
     static let eqRange: ClosedRange<Float> = -12...12
     static let outputGain: Float = powf(10, -9.0 / 20.0)
 
@@ -45,8 +45,9 @@ final class AudioEngineManager: ObservableObject {
     @Published var showPreEQ = true
     @Published var peakOnPost = false   // false = пики по pre-EQ, true = по post-EQ
     @Published var monitorEnabled = false   // OFF по умолчанию — иначе фидбек с динамиками
-    @Published var isRecording   = false
+    @Published var isRecording      = false
     @Published var lastRecordingURL: URL? = nil
+    @Published var recordingSeconds: Int  = 0
 
     // Сглаженный диапазон отображения (плавная адаптация, не скачет)
     @Published var displayRangeLo: Float = -110
@@ -127,6 +128,7 @@ final class AudioEngineManager: ObservableObject {
 
     private var currentFile: AVAudioFile?
     private var recordingFile: AVAudioFile?
+    private var recordingTimer: DispatchSourceTimer?
     private var displayTimer: DispatchSourceTimer?
     private var analyzer: SpectrumAnalyzer?
     private var isRestartingGraph = false
@@ -233,9 +235,24 @@ final class AudioEngineManager: ObservableObject {
                 try? file.write(from: buf)
             }
 
-            isRecording = true
+            isRecording      = true
             lastRecordingURL = url
-            statusText = "Recording… \(url.lastPathComponent)"
+            recordingSeconds = 0
+
+            // Таймер — обновляет счётчик секунд каждую секунду
+            let t = DispatchSource.makeTimerSource(queue: .main)
+            t.schedule(deadline: .now() + 1, repeating: 1)
+            t.setEventHandler { [weak self] in
+                guard let self, self.isRecording else { return }
+                self.recordingSeconds += 1
+                let m = self.recordingSeconds / 60
+                let s = self.recordingSeconds % 60
+                self.statusText = String(format: "Recording… %d:%02d", m, s)
+            }
+            t.resume()
+            recordingTimer = t
+
+            statusText = "Recording… 0:00"
             AppLog.write("startRecording: \(url.path)")
         } catch {
             statusText = "Recording error: \(error.localizedDescription)"
@@ -245,15 +262,21 @@ final class AudioEngineManager: ObservableObject {
     func stopRecording() {
         guard isRecording else { return }
         micMixer.removeTap(onBus: 0)
-        recordingFile = nil
-        isRecording = false
+        recordingTimer?.cancel()
+        recordingTimer = nil
+        recordingFile  = nil
+        isRecording    = false
 
         if let url = lastRecordingURL {
-            statusText = "Saved: \(url.lastPathComponent)"
-            AppLog.write("stopRecording: saved \(url.path)")
-            // Автозагружаем запись как файл — можно сразу нажать Play File
+            let dur = recordingSeconds
+            let m = dur / 60, s = dur % 60
+            statusText = String(format: "Saved: %@ (%d:%02d)", url.lastPathComponent, m, s)
+            AppLog.write("stopRecording: saved \(url.path), duration \(dur)s")
+            // Загружаем запись и сразу переключаемся в FILE режим
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 self.openFile(url: url)
+                self.mode = .file
+                self.applySourceMode()
             }
         }
     }
@@ -592,6 +615,8 @@ final class AudioEngineManager: ObservableObject {
 
     /// Полная перестройка графа при смене входного устройства
     private func reconnectInputGraph() {
+        // Если идёт запись — остановить до переподключения, иначе tap на micMixer зависнет
+        if isRecording { stopRecording() }
         removeTaps()
         engine.disconnectNodeOutput(engine.inputNode)
         engine.disconnectNodeOutput(playerNode)
@@ -841,7 +866,10 @@ final class AudioEngineManager: ObservableObject {
         eqCurveFrame = SpectrumFrame(freqs: freqs, magsDb: totalDb)
     }
 
-    private let SAMPLE_RATE = 44100
+    private var SAMPLE_RATE: Int {
+        let sr = engine.outputNode.outputFormat(forBus: 0).sampleRate
+        return sr > 0 ? Int(sr) : 44100
+    }
 
     private func peakingCoeffs(f0: Float, gainDb: Float, Q: Float, fs: Float) -> ([Float], [Float]) {
         let A     = pow(10, gainDb / 40)

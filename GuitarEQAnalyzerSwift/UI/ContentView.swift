@@ -68,15 +68,23 @@ struct ContentView: View {
                         if engine.isRecording { engine.stopRecording() }
                         else                  { engine.startRecording() }
                     } label: {
-                        Label(engine.isRecording ? "Stop Rec" : "Record",
-                              systemImage: engine.isRecording ? "stop.circle.fill" : "record.circle")
-                            .frame(minWidth: 64, alignment: .leading)
+                        if engine.isRecording {
+                            let m = engine.recordingSeconds / 60
+                            let s = engine.recordingSeconds % 60
+                            Label(String(format: "● %d:%02d", m, s),
+                                  systemImage: "stop.circle.fill")
+                                .monospacedDigit()
+                                .frame(minWidth: 72, alignment: .leading)
+                        } else {
+                            Label("Record", systemImage: "record.circle")
+                                .frame(minWidth: 72, alignment: .leading)
+                        }
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(engine.isRecording ? .red : .gray.opacity(0.4))
                     .help(engine.isRecording
-                          ? "Stop recording and load file for playback"
-                          : "Record mic input to WAV file (pre-EQ)")
+                          ? "Stop recording — file will be loaded automatically"
+                          : "Record mic input to WAV (pre-EQ, dry signal)")
                     .transition(.opacity.combined(with: .move(edge: .leading)))
                 }
 
@@ -169,12 +177,12 @@ struct ContentView: View {
                 .help("Show/hide Pre-EQ spectrum (blue)")
 
                 Button { engine.togglePeakSource() } label: {
-                    Label(engine.peakOnPost ? "Peaks: Post" : "Peaks: Pre",
+                    Label(engine.peakOnPost ? "Peaks: Equalized" : "Peaks: Original",
                           systemImage: "waveform.badge.exclamationmark")
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(engine.peakOnPost ? .blue : .gray.opacity(0.35))
-                .help("Red peaks source: Pre-EQ or Post-EQ")
+                .help("Show resonance peaks from Original (pre-EQ) or Equalized (post-EQ) spectrum")
 
                 Divider().frame(height: 22)
 
