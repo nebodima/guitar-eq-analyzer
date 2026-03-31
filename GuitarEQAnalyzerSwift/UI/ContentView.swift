@@ -332,7 +332,9 @@ struct ContentView: View {
                         range: Double(AudioEngineManager.eqRange.lowerBound)...Double(AudioEngineManager.eqRange.upperBound),
                         onDragStart: { if engine.eqEnabled { engine.pushUndo() } }
                     )
+                    .frame(width: 60)
                 }
+                Spacer()
             }
             .padding(.horizontal, 4)
             .opacity(engine.eqEnabled ? 1.0 : 0.4)
@@ -496,7 +498,6 @@ struct EQBandSlider: View {
             }
             .frame(width: geo.size.width, alignment: .center)
         }
-        .frame(maxWidth: .infinity)
         .frame(height: sliderHeight + 40)
     }
 
@@ -572,7 +573,7 @@ struct VerticalSlider: View {
             .onTapGesture(count: 2) { value = 0 }  // двойной тап — сброс в 0
         }
         .frame(width: 30, height: height)
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: 30)
     }
 }
 
