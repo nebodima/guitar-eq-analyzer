@@ -299,9 +299,8 @@ struct ContentView: View {
 
             // ── EQ зона: кнопки управления + слайдеры в одну строку ──
             HStack(alignment: .bottom, spacing: 12) {
-                // EQ-кнопки — выровнены по центру высоты слайдеров
+                // EQ-кнопки
                 VStack(spacing: 6) {
-                    Spacer()
                     Button { engine.toggleEQ() } label: {
                         Label(engine.eqEnabled ? "EQ ON" : "EQ OFF",
                               systemImage: "slider.horizontal.3")
@@ -324,7 +323,6 @@ struct ContentView: View {
                     .help("Undo (⌘Z)")
                     .keyboardShortcut("z", modifiers: .command)
                 }
-                .padding(.bottom, 4)
 
                 Divider()
 
@@ -348,6 +346,8 @@ struct ContentView: View {
                 Spacer()
             }
             .padding(.horizontal, 4)
+
+            Spacer(minLength: 0)
         }
         .padding(12)
         .fileImporter(isPresented: $showFileImporter, allowedContentTypes: [.audio],
