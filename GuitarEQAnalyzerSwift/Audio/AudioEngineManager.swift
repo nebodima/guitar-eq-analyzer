@@ -480,6 +480,29 @@ final class AudioEngineManager: ObservableObject {
         presetStore.saveNamed(namedPresets)
     }
 
+    /// Помечает один пресет как "Мой пресет" (isDefault=true), остальные снимает
+    func setDefaultPreset(_ preset: NamedPreset) {
+        namedPresets = namedPresets.map {
+            var p = $0
+            p.isDefault = (p.id == preset.id)
+            return p
+        }
+        presetStore.saveNamed(namedPresets)
+        statusText = "My Preset: \(preset.name)"
+    }
+
+    /// Загружает помеченный "Мой пресет", если он есть
+    func loadDefaultPreset() {
+        guard let p = namedPresets.first(where: { $0.isDefault }) else {
+            statusText = "No default preset — mark one with ★ in Presets"
+            return
+        }
+        loadNamedPreset(p)
+    }
+
+    var hasDefaultPreset: Bool { namedPresets.contains(where: { $0.isDefault }) }
+    var defaultPresetName: String { namedPresets.first(where: { $0.isDefault })?.name ?? "" }
+
     // ── Export ───────────────────────────────────────────────
     func exportEQText() -> String {
         var lines = ["Guitar EQ Settings", "─────────────────────"]
@@ -910,12 +933,22 @@ final class AudioEngineManager: ObservableObject {
     private func complexAdd(_ a: SIMD2<Float>, _ b: SIMD2<Float>) -> SIMD2<Float> { a + b }
 
     private func loadPresetOnStart() {
+        // Приоритет: "Мой пресет" (isDefault) → last-used
+        if let def = presetStore.defaultPreset() {
+            let normalized = def.gains.map { min(max($0, Self.eqRange.lowerBound), Self.eqRange.upperBound) }
+            if normalized.count == Self.eqFrequencies.count {
+                eqGains = normalized
+                applyGainsToBands()
+                statusText = "My Preset loaded: \(def.name)"
+                return
+            }
+        }
         guard let preset = presetStore.loadLastUsed() else { return }
         let normalized = preset.gains.map { min(max($0, Self.eqRange.lowerBound), Self.eqRange.upperBound) }
         if normalized.count == Self.eqFrequencies.count {
             eqGains = normalized
             applyGainsToBands()
-            statusText = "Preset loaded"
+            statusText = "Last preset loaded"
         }
     }
 

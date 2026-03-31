@@ -212,6 +212,19 @@ struct ContentView: View {
                 Divider().frame(height: 22)
 
                 // Пресеты и копирование
+                // Быстрая загрузка "Моего пресета" — если помечен
+                Button { engine.loadDefaultPreset() } label: {
+                    Label(engine.hasDefaultPreset ? "★ \(engine.defaultPresetName)" : "My Preset",
+                          systemImage: "star.fill")
+                        .lineLimit(1)
+                        .frame(maxWidth: 130, alignment: .leading)
+                }
+                .buttonStyle(.bordered)
+                .foregroundStyle(engine.hasDefaultPreset ? .yellow : .secondary)
+                .help(engine.hasDefaultPreset
+                      ? "Load: \(engine.defaultPresetName)"
+                      : "No default preset yet — mark one with ★ in Presets panel")
+
                 Button { showPresetsPanel.toggle() } label: {
                     Label("Presets", systemImage: "list.star")
                 }
@@ -387,8 +400,28 @@ struct PresetsPanel: View {
                 List {
                     ForEach(engine.namedPresets) { preset in
                         HStack {
+                            // Звёздочка — пометить как "Мой пресет"
+                            Button {
+                                engine.setDefaultPreset(preset)
+                            } label: {
+                                Image(systemName: preset.isDefault ? "star.fill" : "star")
+                                    .foregroundStyle(preset.isDefault ? .yellow : .secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .help(preset.isDefault ? "This is your default preset" : "Mark as My Preset (loads on startup)")
+
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(preset.name).font(.body)
+                                HStack(spacing: 4) {
+                                    Text(preset.name).font(.body)
+                                    if preset.isDefault {
+                                        Text("default")
+                                            .font(.caption)
+                                            .foregroundStyle(.yellow)
+                                            .padding(.horizontal, 5).padding(.vertical, 1)
+                                            .background(.yellow.opacity(0.15),
+                                                        in: Capsule())
+                                    }
+                                }
                                 Text(preset.date, style: .date)
                                     .font(.caption).foregroundStyle(.secondary)
                             }

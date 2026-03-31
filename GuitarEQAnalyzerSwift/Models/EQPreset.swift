@@ -10,15 +10,17 @@ struct EQPreset: Codable {
 }
 
 struct NamedPreset: Codable, Identifiable {
-    var id:    UUID
-    var name:  String
-    var gains: [Float]
-    var date:  Date
+    var id:        UUID
+    var name:      String
+    var gains:     [Float]
+    var date:      Date
+    var isDefault: Bool
 
-    init(name: String, gains: [Float]) {
-        self.id    = UUID()
-        self.name  = name
-        self.gains = gains
-        self.date  = Date()
+    init(name: String, gains: [Float], isDefault: Bool = false) {
+        self.id        = UUID()
+        self.name      = name
+        self.gains     = gains
+        self.date      = Date()
+        self.isDefault = isDefault
     }
 }

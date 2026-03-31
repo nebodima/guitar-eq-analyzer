@@ -36,6 +36,10 @@ final class PresetStore {
         try? data?.write(to: namedURL, options: .atomic)
     }
 
+    func defaultPreset() -> NamedPreset? {
+        loadNamed().first(where: { $0.isDefault })
+    }
+
     private func ensureDir() throws {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     }
