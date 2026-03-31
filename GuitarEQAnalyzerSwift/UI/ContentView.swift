@@ -240,19 +240,6 @@ struct ContentView: View {
                 Divider().frame(height: 22)
 
                 // Пресеты и копирование
-                // Быстрая загрузка "Моего пресета" — если помечен
-                Button { engine.loadDefaultPreset() } label: {
-                    Label(engine.hasDefaultPreset ? "★ \(engine.defaultPresetName)" : "My Preset",
-                          systemImage: "star.fill")
-                        .lineLimit(1)
-                        .frame(maxWidth: 130, alignment: .leading)
-                }
-                .buttonStyle(.bordered)
-                .foregroundStyle(engine.hasDefaultPreset ? .yellow : .secondary)
-                .help(engine.hasDefaultPreset
-                      ? "Load: \(engine.defaultPresetName)"
-                      : "No default preset yet — mark one with ★ in Presets panel")
-
                 Button { showPresetsPanel.toggle() } label: {
                     Label("Presets", systemImage: "list.star")
                 }
