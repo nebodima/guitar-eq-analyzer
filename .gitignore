@@ -9,6 +9,9 @@ guitar_eq_live.log
 eq_saved.json
 eq_preset_*.json
 
+# .app bundle — бинарник не храним в git (пересобирается из исходников)
+GuitarEQAnalyzer.app/Contents/MacOS/
+
 # Local audio/test assets
 *.wav
 *.mp3
