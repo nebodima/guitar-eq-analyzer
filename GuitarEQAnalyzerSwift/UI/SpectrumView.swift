@@ -83,7 +83,8 @@ struct SpectrumView: View {
                 .padding(.top, 12).padding(.leading, lp + 6)
 
                 // ── Idle hint ────────────────────────────────────────
-                if pre.magsDb.isEmpty {
+                // Используем post, а не pre — pre может быть пустым при showPreEQ=false
+                if post.magsDb.isEmpty {
                     VStack(spacing: 8) {
                         Image(systemName: "waveform.badge.mic")
                             .font(.system(size: 36))

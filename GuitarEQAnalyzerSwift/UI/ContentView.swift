@@ -39,16 +39,31 @@ struct ContentView: View {
 
             Divider()
 
-            // ── Источник звука ───────────────────────────────────────
+            // ── Строка 1: Источник + Снэпшот ────────────────────────
             HStack(spacing: 8) {
-                // ── Группа: Источник ─────────────────────────────────
                 Button {
                     engine.toggleMic()
                 } label: {
                     Label(engine.mode == .mic ? "MIC ON" : "MIC", systemImage: "mic.fill")
+                        .frame(minWidth: 52, alignment: .leading)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(engine.mode == .mic ? .green : .gray.opacity(0.4))
+
+                // Мониторинг — слышать себя в наушниках (только в MIC режиме)
+                // Рендерим всегда чтобы не сдвигать соседние кнопки; скрываем opacity
+                Button { engine.toggleMonitor() } label: {
+                    Label(engine.monitorEnabled ? "Monitor ON" : "Monitor",
+                          systemImage: engine.monitorEnabled ? "headphones.circle.fill" : "headphones")
+                        .frame(minWidth: 80, alignment: .leading)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(engine.monitorEnabled ? .green : .gray.opacity(0.4))
+                .help("Hear mic through output device. OFF by default to prevent feedback.")
+                .opacity(engine.mode == .mic ? 1 : 0)
+                .allowsHitTesting(engine.mode == .mic)
+
+                Divider().frame(height: 22)
 
                 Button {
                     showFileImporter = true
@@ -62,6 +77,7 @@ struct ContentView: View {
                 } label: {
                     Label(engine.mode == .file ? "Stop" : "Play File",
                           systemImage: engine.mode == .file ? "stop.fill" : "play.fill")
+                        .frame(minWidth: 56, alignment: .leading)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(engine.mode == .file ? .orange : .blue)
@@ -84,28 +100,33 @@ struct ContentView: View {
                 .buttonStyle(.bordered)
                 .help("Freeze current pre-EQ spectrum for comparison")
 
-                if !engine.snapshotFrame.freqs.isEmpty {
-                    Button { engine.clearSnapshot() } label: {
-                        Image(systemName: "camera.badge.minus")
-                    }
-                    .buttonStyle(.bordered)
-                    .help("Clear snapshot")
+                // Clear snapshot — скрываем через opacity чтобы не сдвигать
+                Button { engine.clearSnapshot() } label: {
+                    Image(systemName: "camera.badge.minus")
                 }
+                .buttonStyle(.bordered)
+                .help("Clear snapshot")
+                .opacity(engine.snapshotFrame.freqs.isEmpty ? 0 : 1)
+                .allowsHitTesting(!engine.snapshotFrame.freqs.isEmpty)
 
-                Divider().frame(height: 22)
+                Spacer()
+            }
 
-                // ── Группа: EQ ───────────────────────────────────────
+            // ── Строка 2: EQ + Данные ────────────────────────────────
+            HStack(spacing: 8) {
                 Button {
                     engine.startAutoEQ()
                 } label: {
-                    if engine.isAutoEQRunning {
+                    // Оба состояния всегда в ZStack — кнопка не меняет размер при анализе
+                    ZStack {
+                        Label("AutoEQ", systemImage: "wand.and.stars")
+                            .opacity(engine.isAutoEQRunning ? 0 : 1)
                         HStack(spacing: 5) {
                             ProgressView(value: engine.autoEQProgress)
                                 .frame(width: 50)
                             Text("Analyzing…")
                         }
-                    } else {
-                        Label("AutoEQ", systemImage: "wand.and.stars")
+                        .opacity(engine.isAutoEQRunning ? 1 : 0)
                     }
                 }
                 .buttonStyle(.borderedProminent)
@@ -114,16 +135,19 @@ struct ContentView: View {
                 .help("Play guitar for 4 sec, AutoEQ will flatten the response")
 
                 Button { engine.togglePreEQ() } label: {
-                    Label(engine.showPreEQ ? "Pre" : "Pre", systemImage: "waveform")
+                    Label("Pre-EQ", systemImage: "waveform")
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(engine.showPreEQ ? .blue.opacity(0.7) : .gray.opacity(0.35))
                 .help("Show/hide Pre-EQ spectrum (blue)")
 
+                Divider().frame(height: 22)
+
                 Button {
                     engine.toggleEQ()
                 } label: {
                     Label(engine.eqEnabled ? "EQ ON" : "EQ OFF", systemImage: "slider.horizontal.3")
+                        .frame(minWidth: 52, alignment: .leading)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(engine.eqEnabled ? .blue : .gray.opacity(0.4))
@@ -140,7 +164,6 @@ struct ContentView: View {
 
                 Divider().frame(height: 22)
 
-                // ── Группа: Данные ───────────────────────────────────
                 Button {
                     showPresetsPanel.toggle()
                 } label: {
@@ -174,15 +197,18 @@ struct ContentView: View {
                 .labelsHidden()
                 .frame(maxWidth: 280)
 
+                // Output device — только чтение. Менять через macOS: меню 🔊 в строке состояния
                 Label("Out:", systemImage: "speaker.wave.2").font(.caption).foregroundStyle(.secondary)
-                Picker("", selection: Binding(
-                    get: { engine.selectedOutputID ?? 0 },
-                    set: { engine.selectOutputDevice($0) }
-                )) {
-                    ForEach(engine.outputDevices) { Text($0.name).tag($0.id) }
+                HStack(spacing: 3) {
+                    Text(engine.outputDevices.first(where: { $0.id == engine.selectedOutputID })?.name ?? "System default")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 8))
+                        .foregroundStyle(.tertiary)
                 }
-                .labelsHidden()
-                .frame(maxWidth: 280)
+                .help("Output is read-only — change via macOS volume menu in menu bar")
+                .frame(maxWidth: 220, alignment: .leading)
 
                 Button { engine.refreshDevices() } label: {
                     Image(systemName: "arrow.clockwise")
@@ -221,7 +247,7 @@ struct ContentView: View {
                             set: { engine.updateGain(index: idx, value: Float($0)) }
                         ),
                         range: Double(AudioEngineManager.eqRange.lowerBound)...Double(AudioEngineManager.eqRange.upperBound),
-                        onDragStart: { engine.pushUndo() }
+                        onDragStart: { if engine.eqEnabled { engine.pushUndo() } }
                     )
                 }
             }
