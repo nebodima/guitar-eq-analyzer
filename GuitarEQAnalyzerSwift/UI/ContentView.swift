@@ -3,6 +3,7 @@ import UniformTypeIdentifiers
 
 struct ContentView: View {
     @ObservedObject var engine: AudioEngineManager
+    @StateObject private var perf = PerformanceMonitor()
     @State private var showFileImporter  = false
     @State private var showSaveSheet     = false
     @State private var newPresetName     = ""
@@ -241,6 +242,28 @@ struct ContentView: View {
                     .font(.caption)
                     .foregroundStyle(statusColor)
                     .lineLimit(1)
+
+                Spacer()
+
+                // ── Нагрузка CPU / RAM ────────────────────────────────
+                HStack(spacing: 10) {
+                    Label {
+                        Text(String(format: "%.1f%%", perf.cpuPercent))
+                            .monospacedDigit()
+                    } icon: {
+                        Image(systemName: "cpu")
+                    }
+                    .foregroundStyle(perf.cpuPercent > 60 ? .orange : .secondary)
+
+                    Label {
+                        Text(String(format: "%.0f MB", perf.memoryMB))
+                            .monospacedDigit()
+                    } icon: {
+                        Image(systemName: "memorychip")
+                    }
+                    .foregroundStyle(perf.memoryMB > 300 ? .orange : .secondary)
+                }
+                .font(.caption)
             }
 
             Divider()
