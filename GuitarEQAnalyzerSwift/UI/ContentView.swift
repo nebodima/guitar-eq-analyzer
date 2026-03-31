@@ -31,7 +31,7 @@ struct ContentView: View {
                 if engine.mode != .idle {
                     Label(engine.mode == .mic ? "MIC" : "FILE",
                           systemImage: engine.mode == .mic ? "mic.fill" : "doc.fill")
-                        .font(.caption2)
+                        .font(.caption)
                         .foregroundStyle(.white)
                         .padding(.horizontal, 7).padding(.vertical, 3)
                         .background(modeColor.opacity(0.85), in: Capsule())
@@ -87,8 +87,8 @@ struct ContentView: View {
 
                 if !engine.loadedFileName.isEmpty {
                     Label(engine.loadedFileName, systemImage: "music.note")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(.footnote)
+                        .foregroundStyle(.primary.opacity(0.7))
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .frame(maxWidth: 200, alignment: .leading)
@@ -222,10 +222,10 @@ struct ContentView: View {
                 HStack(spacing: 3) {
                     Text(engine.outputDevices.first(where: { $0.id == engine.selectedOutputID })?.name ?? "System default")
                         .font(.footnote)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.secondary)
                     Image(systemName: "lock.fill")
-                        .font(.system(size: 8))
-                        .foregroundStyle(.tertiary)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
                 }
                 .help("Output is read-only — change via macOS volume menu in menu bar")
                 .frame(maxWidth: 220, alignment: .leading)
@@ -272,7 +272,7 @@ struct ContentView: View {
             HStack(spacing: 6) {
                 Text("EQ BANDS")
                     .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.primary.opacity(0.6))
                 Rectangle()
                     .fill(.gray.opacity(0.25))
                     .frame(height: 1)
@@ -429,8 +429,8 @@ struct EQBandSlider: View {
 
                 // Метка частоты
                 Text(label)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.7))
                     .frame(height: 16)
             }
             .frame(width: geo.size.width, alignment: .center)
