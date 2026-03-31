@@ -151,9 +151,9 @@ struct ContentView: View {
                 .help("Show GuitarEQ Recordings folder in Finder")
             }
 
-            // ── Строка 2: EQ ─────────────────────────────────────────
+            // ── Строка 2: Анализ + Визуализация + Пресеты ───────────────
             HStack(spacing: 6) {
-                // AutoEQ + профиль — смысловая группа
+                // AutoEQ
                 Button {
                     engine.startAutoEQ()
                 } label: {
@@ -171,9 +171,10 @@ struct ContentView: View {
                 .buttonStyle(.borderedProminent)
                 .tint(.purple)
                 .disabled(engine.isAutoEQRunning || engine.mode == .idle)
-                .help("Play guitar/vocal for 4 sec, then AutoEQ adjusts bands")
+                .help("AutoEQ: analyze then adjust bands (⌘↵)")
                 .keyboardShortcut(.return, modifiers: .command)
 
+                // Профиль AutoEQ
                 Picker(selection: $engine.selectedProfileIndex, label: EmptyView()) {
                     ForEach(AudioEngineManager.profiles.indices, id: \.self) { i in
                         Text(AudioEngineManager.profiles[i].name).tag(i)
@@ -182,8 +183,9 @@ struct ContentView: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .frame(width: 162)
-                .help("AutoEQ profile: Guitar, Vocal or Flat target curve")
+                .help("AutoEQ profile: Guitar, Vocal or Flat")
 
+                // Длительность анализа
                 Picker(selection: $engine.autoEQDuration, label: EmptyView()) {
                     Text("4s").tag(4.0)
                     Text("8s").tag(8.0)
@@ -196,51 +198,25 @@ struct ContentView: View {
 
                 Divider().frame(height: 22)
 
-                // Визуализация — Pre-EQ и Peaks
+                // Визуализация
                 Button { engine.togglePreEQ() } label: {
                     Label("Pre-EQ", systemImage: "waveform")
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(engine.showPreEQ ? .blue : .gray.opacity(0.35))
-                .help("Show/hide Pre-EQ spectrum (blue)")
+                .help("Show/hide Pre-EQ spectrum")
 
                 Button { engine.togglePeakSource() } label: {
                     Image(systemName: "waveform.badge.exclamationmark")
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(engine.peakOnPost ? .blue : .gray.opacity(0.35))
-                .help(engine.peakOnPost
-                      ? "Peaks: Equalized (post-EQ) — click to switch to Original"
-                      : "Peaks: Original (pre-EQ) — click to switch to Equalized")
+                .help(engine.peakOnPost ? "Peaks: Equalized → click for Original"
+                                        : "Peaks: Original → click for Equalized")
 
                 Divider().frame(height: 22)
 
-                // EQ включение — главное
-                Button { engine.toggleEQ() } label: {
-                    Label(engine.eqEnabled ? "EQ ON" : "EQ OFF", systemImage: "slider.horizontal.3")
-                        .frame(minWidth: 50, alignment: .leading)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(engine.eqEnabled ? .green : .gray.opacity(0.4))
-
-                // Вторичные EQ действия — только иконки
-                Button { engine.resetEQ() } label: {
-                    Image(systemName: "arrow.counterclockwise")
-                }
-                .buttonStyle(.bordered)
-                .help("Reset EQ — set all bands to 0 dB")
-
-                Button { engine.undoEQ() } label: {
-                    Image(systemName: "arrow.uturn.backward")
-                }
-                .buttonStyle(.bordered)
-                .disabled(!engine.canUndo)
-                .help("Undo last EQ change (⌘Z)")
-                .keyboardShortcut("z", modifiers: .command)
-
-                Divider().frame(height: 22)
-
-                // Пресеты и копирование
+                // Пресеты
                 Button { showPresetsPanel.toggle() } label: {
                     Label("Presets", systemImage: "list.star")
                 }
@@ -253,7 +229,7 @@ struct ContentView: View {
                     Image(systemName: "doc.on.clipboard")
                 }
                 .buttonStyle(.bordered)
-                .help("Copy EQ settings to clipboard")
+                .help("Copy EQ to clipboard")
 
                 Spacer()
             }
@@ -321,23 +297,57 @@ struct ContentView: View {
 
             Divider()
 
-            HStack(alignment: .bottom, spacing: 0) {
-                ForEach(Array(AudioEngineManager.eqFrequencies.enumerated()), id: \.offset) { idx, freq in
-                    EQBandSlider(
-                        label: freqLabel(freq),
-                        gain: Binding(
-                            get: { Double(engine.eqGains[idx]) },
-                            set: { engine.updateGain(index: idx, value: Float($0)) }
-                        ),
-                        range: Double(AudioEngineManager.eqRange.lowerBound)...Double(AudioEngineManager.eqRange.upperBound),
-                        onDragStart: { if engine.eqEnabled { engine.pushUndo() } }
-                    )
-                    .frame(width: 60)
+            // ── EQ зона: кнопки управления + слайдеры в одну строку ──
+            HStack(alignment: .bottom, spacing: 12) {
+                // EQ-кнопки — выровнены по центру высоты слайдеров
+                VStack(spacing: 6) {
+                    Spacer()
+                    Button { engine.toggleEQ() } label: {
+                        Label(engine.eqEnabled ? "EQ ON" : "EQ OFF",
+                              systemImage: "slider.horizontal.3")
+                            .frame(minWidth: 64, alignment: .leading)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(engine.eqEnabled ? .green : .gray.opacity(0.4))
+
+                    Button { engine.resetEQ() } label: {
+                        Label("Reset", systemImage: "arrow.counterclockwise")
+                    }
+                    .buttonStyle(.bordered)
+                    .help("Reset all bands to 0 dB")
+
+                    Button { engine.undoEQ() } label: {
+                        Label("Undo", systemImage: "arrow.uturn.backward")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(!engine.canUndo)
+                    .help("Undo (⌘Z)")
+                    .keyboardShortcut("z", modifiers: .command)
                 }
+                .padding(.bottom, 4)
+
+                Divider()
+
+                // Слайдеры
+                HStack(alignment: .bottom, spacing: 0) {
+                    ForEach(Array(AudioEngineManager.eqFrequencies.enumerated()), id: \.offset) { idx, freq in
+                        EQBandSlider(
+                            label: freqLabel(freq),
+                            gain: Binding(
+                                get: { Double(engine.eqGains[idx]) },
+                                set: { engine.updateGain(index: idx, value: Float($0)) }
+                            ),
+                            range: Double(AudioEngineManager.eqRange.lowerBound)...Double(AudioEngineManager.eqRange.upperBound),
+                            onDragStart: { if engine.eqEnabled { engine.pushUndo() } }
+                        )
+                        .frame(width: 60)
+                    }
+                }
+                .opacity(engine.eqEnabled ? 1.0 : 0.4)
+
                 Spacer()
             }
             .padding(.horizontal, 4)
-            .opacity(engine.eqEnabled ? 1.0 : 0.4)
         }
         .padding(12)
         .fileImporter(isPresented: $showFileImporter, allowedContentTypes: [.audio],
