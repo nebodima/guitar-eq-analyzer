@@ -43,6 +43,7 @@ final class AudioEngineManager: ObservableObject {
     @Published var micPermissionDenied = false
     @Published var canUndo = false
     @Published var showPreEQ = true
+    @Published var peakOnPost = false   // false = пики по pre-EQ, true = по post-EQ
     @Published var monitorEnabled = false   // OFF по умолчанию — иначе фидбек с динамиками
 
     // Сглаженный диапазон отображения (плавная адаптация, не скачет)
@@ -164,6 +165,7 @@ final class AudioEngineManager: ObservableObject {
     }
 
     func togglePreEQ() { showPreEQ.toggle() }
+    func togglePeakSource() { peakOnPost.toggle() }
 
     func toggleMonitor() {
         monitorEnabled.toggle()

@@ -1,14 +1,17 @@
 import SwiftUI
 
+enum PeakSource { case pre, post }
+
 struct SpectrumView: View {
-    let pre:      SpectrumFrame
-    let post:     SpectrumFrame
-    let snapshot: SpectrumFrame
-    let eqCurve:  SpectrumFrame
+    let pre:        SpectrumFrame
+    let post:       SpectrumFrame
+    let snapshot:   SpectrumFrame
+    let eqCurve:    SpectrumFrame
     let fMin: Float
     let fMax: Float
-    let yMin: Float   // нижний предел по умолчанию
-    let yMax: Float   // верхний предел по умолчанию
+    let yMin: Float
+    let yMax: Float
+    var peakSource: PeakSource = .pre
 
     var body: some View {
         // yMin/yMax уже сглажены в AudioEngineManager — используем напрямую
@@ -26,7 +29,8 @@ struct SpectrumView: View {
                 // ── Canvas ────────────────────────────────────────────
                 Canvas { ctx, _ in
                     drawGrid(ctx: &ctx, w: w, h: h, ox: lp, oy: 8, lo: lo, hi: hi)
-                    drawResonanceZones(ctx: &ctx, frame: pre, w: w, h: h, ox: lp, oy: 8)
+                    let peakFrame = (peakSource == .post) ? post : pre
+                    drawResonanceZones(ctx: &ctx, frame: peakFrame, w: w, h: h, ox: lp, oy: 8)
                     if !snapshot.freqs.isEmpty {
                         drawLine(ctx: &ctx, frame: snapshot, color: .yellow.opacity(0.65),
                                  w: w, h: h, ox: lp, oy: 8, lo: lo, hi: hi, dash: [5, 3])

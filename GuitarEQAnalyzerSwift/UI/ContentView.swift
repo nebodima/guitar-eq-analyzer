@@ -13,14 +13,15 @@ struct ContentView: View {
 
             // ── Спектр ───────────────────────────────────────────────
             SpectrumView(
-                pre:      engine.showPreEQ ? engine.preFrame : SpectrumFrame(freqs: [], magsDb: []),
-                post:     engine.postFrame,
-                snapshot: engine.snapshotFrame,
-                eqCurve:  engine.eqCurveFrame,
+                pre:        engine.showPreEQ ? engine.preFrame : SpectrumFrame(freqs: [], magsDb: []),
+                post:       engine.postFrame,
+                snapshot:   engine.snapshotFrame,
+                eqCurve:    engine.eqCurveFrame,
                 fMin: 60,
                 fMax: 8000,
                 yMin: -120,
-                yMax: -10
+                yMax: -10,
+                peakSource: engine.peakOnPost ? .post : .pre
             )
             .frame(height: 380)
             .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -140,6 +141,14 @@ struct ContentView: View {
                 .buttonStyle(.borderedProminent)
                 .tint(engine.showPreEQ ? .blue.opacity(0.7) : .gray.opacity(0.35))
                 .help("Show/hide Pre-EQ spectrum (blue)")
+
+                Button { engine.togglePeakSource() } label: {
+                    Label(engine.peakOnPost ? "Peaks: Post" : "Peaks: Pre",
+                          systemImage: "waveform.badge.exclamationmark")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(engine.peakOnPost ? .green.opacity(0.7) : .orange.opacity(0.6))
+                .help("Red peaks based on: Pre-EQ (original) or Post-EQ (after EQ processing)")
 
                 Divider().frame(height: 22)
 
